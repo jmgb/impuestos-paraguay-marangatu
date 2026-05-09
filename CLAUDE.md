@@ -30,7 +30,7 @@ Automatización Playwright (Node.js, ESM) que prepara las declaraciones mensuale
 3. Seleccionar **Año** y **Mes**
 4. **Confirmar Presentación** (botón final, sólo con `--submit`)
 
-Estado del flujo automatizado: F120 llega hasta `Abrir Declaración` en `dry-run` y, con `--submit`, intenta el botón final + confirmación. F241 abre `gestionComprobantesVirtuales.do?_cyp=...`, entra a la tarjeta `Confirmar Presentación`, selecciona `select[name="anho"]` y `select[name="mes"]`, y se detiene si no hay talones pendientes o antes del botón final si aparecen pendientes.
+Estado del flujo automatizado: F120 llega hasta `Abrir Declaración` en `dry-run` y, con `--submit`, intenta el botón final + confirmación. F241 abre `gestionComprobantesVirtuales.do?_cyp=...`, entra a la tarjeta `Confirmar Presentación`, selecciona `select[name="anho"]` y `select[name="mes"]`, espera a que aparezca `button[data-ng-click^="vm.procesar"]` (texto `Presentar declaración`) y, sólo con `--submit`, lo pulsa y acepta el pop-up final (`button.btn-primary[type="button"]` con texto `Aceptar`). En `dry-run` se detiene en el checkpoint `09-f241-submit-ready` sin pulsar nada.
 
 ## Comandos
 
@@ -39,11 +39,12 @@ npm.cmd install
 npx.cmd playwright install chromium     # solo si falta el navegador
 
 npm.cmd run dry-run                     # corrida visible sin presentar
-npm.cmd test                            # tests de calculo de periodo
+npm.cmd test                            # tests de periodo + estado local
 npm.cmd run clean:artifacts             # borra capturas/HTML locales sensibles
 node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f241   # solo F120
 node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f120   # solo F241
 node src/marangatu.js --year 2026 --month 5 --submit --skip-f241    # presentación real F120
+node src/marangatu.js --year 2026 --month 5 --submit --force        # bypassa estado local (presentado/error previo)
 npm.cmd run register-task               # registra la tarea programada de Windows
 ```
 
@@ -55,7 +56,14 @@ Hay una prueba ligera de cálculo de período en `scripts/test-period.mjs`. La v
 
 **Punto de entrada único**: `src/marangatu.js` (ESM, Playwright + dotenv). Todo el flujo vive en ese archivo: parseo de args, login, F120, F241, checkpoints. No hay capa de abstracción de páginas — los selectores están inline.
 
-**Doble seguro contra presentación accidental**: el envío real sólo ocurre si `--submit` o `MARANGATU_SUBMIT=true` Y `--dry-run` está ausente (ver `main()`). Es deliberado: `MARANGATU_SUBMIT=false` en `.env` es la postura por defecto. F241 tiene un guardarraíl adicional: si aparecen talones pendientes, falla antes del botón final hasta que se valide ese selector. **No quitar estos guardarraíles al refactorizar.**
+**Doble seguro contra presentación accidental**: el envío real sólo ocurre si `--submit` o `MARANGATU_SUBMIT=true` Y `--dry-run` está ausente (ver `main()`). Es deliberado: `MARANGATU_SUBMIT=false` en `.env` es la postura por defecto. **No quitar estos guardarraíles al refactorizar.**
+
+**Estado local por (período, formulario)**: en modo `submit` cada formulario se envuelve con `runFormWithStateTracking`, que persiste en `.state/forms.json` el estado `iniciado` → `presentado` (o `error` con mensaje). Antes de correr, lee el estado previo:
+- `presentado` → salta el formulario (use `--force` para reintentar deliberadamente).
+- `error` → **lanza excepción** (hay que revisar `artifacts/` y reintentar con `--force`).
+- En `dry-run` el estado **no se lee ni se escribe**, para no contaminarlo durante pruebas.
+
+Esto complementa `maybeAlreadyPresented` (que consulta el portal) con un guardarraíl local independiente, especialmente útil cuando un envío queda a medias por error de red o crash.
 
 **Selectores frágiles y sesión-dependientes**:
 - El `href` real de `Presentar Declaracion` cambia por sesión (`recibirDDJJContribuyente.do?_cyp=...`). Hay que leerlo del DOM cada vez (`findCommonOptionHref`).
@@ -67,6 +75,8 @@ Hay una prueba ligera de cálculo de período en `scripts/test-period.mjs`. La v
 
 **Artifacts sensibles**: `artifacts/` esta gitignored, pero puede contener datos fiscales. Usar `npm.cmd run clean:artifacts` cuando las capturas/HTML ya no sean necesarios.
 
+**Justificantes de presentación**: cuando una corrida con `--submit` completa F120 o F241 con éxito, `saveJustificante` guarda la captura final como `presentaciones/YYYY-MM/F120.png` (o `F241.png`). El subdirectorio del período se crea sólo cuando se presenta — es la prueba legal de que la declaración salió. El path se incluye en el mensaje Telegram. La carpeta `presentaciones/` está trackeada (vía `.gitkeep`), pero su contenido está gitignored. Configurable con `MARANGATU_PRESENTACIONES_DIR`. **Distinta semántica que `artifacts/`**: `artifacts/` es debug volátil que se borra; `presentaciones/` es archivo legal que se conserva.
+
 **Programación mensual (Windows)**: `scripts/register-task.ps1` registra una tarea que ejecuta `run-monthly-check.ps1` cada 30 minutos. El script PowerShell sólo lanza Node si en **zona horaria Madrid** (`Romance Standard Time`) son las 12:00 del día 1, y guarda `.state/last-run.txt` con clave `yyyy-MM` para no repetir el mismo mes. Node calcula el período con `Europe/Madrid`, no con la zona local implícita. Si se cambia la ventana o la TZ, hay que actualizar esa lógica, no la tarea programada.
 
 ## Convenciones
@@ -75,3 +85,17 @@ Hay una prueba ligera de cálculo de período en `scripts/test-period.mjs`. La v
 - `safeClick` valida que el botón no esté `disabled` antes de cliquear; usarla siempre en lugar de `locator.click()` directo.
 - Variables de entorno se leen vía `env(name, fallback)` / `boolEnv(name, fallback)`. `env` lanza si falta y no hay fallback.
 - Las credenciales viven en `.env` (gitignored). `.env.example` documenta las variables esperadas.
+
+## Notificaciones Telegram
+
+Al final de `main()` se envía **un solo mensaje** a Telegram con el resumen por formulario (período, estado `presentado`/`error`/`ya presentado`, modo `submit`/`dry-run`). Se dispara cuando:
+- el modo es `submit` (notificación normal de presentación), **o**
+- ocurrió cualquier error durante la corrida (visibilidad de fallos en ejecuciones automáticas).
+
+Dry-runs sin errores **no notifican**, para evitar ruido durante pruebas.
+
+Configuración (en `.env`):
+- `MARANGATU_TELEGRAM_TOKEN` — token del bot.
+- `MARANGATU_TELEGRAM_CHAT_ID` — chat o canal destinatario.
+
+Si falta cualquiera de las dos variables, el envío se salta silenciosamente con un log claro. La implementación (`sendTelegramMessage`) usa `fetch` nativo, parse mode `HTML`, escape conservador (`&` `<` `>`) y reintento básico ante 429/red. Inspirada en `presupuestor/backend/app/services/telegram_service.py` pero simplificada: un único mensaje por corrida, sin chunking ni `ThreadPoolExecutor` (no aplica en un script de un solo paso).

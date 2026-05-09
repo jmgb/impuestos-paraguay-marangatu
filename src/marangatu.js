@@ -10,12 +10,15 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const artifactsDir = path.resolve(rootDir, process.env.MARANGATU_ARTIFACTS_DIR || "artifacts");
+const presentacionesDir = path.resolve(rootDir, process.env.MARANGATU_PRESENTACIONES_DIR || "presentaciones");
 
 const baseUrl = "https://marangatu.set.gov.py/eset/";
 const loginUrl = `${baseUrl}login`;
 const defaultTimeZone = "Europe/Madrid";
 const f241GestionPath = "gestionComprobantesVirtuales.do";
 const f241TalonPath = "gdi/presentacionTalonResumen.do";
+const stateDir = path.resolve(rootDir, ".state");
+const formStateFile = path.join(stateDir, "forms.json");
 
 const monthLabels = [
   "Enero",
@@ -38,6 +41,7 @@ function parseArgs(argv) {
     submit: false,
     skipF120: false,
     skipF241: false,
+    force: false,
     year: undefined,
     month: undefined
   };
@@ -48,6 +52,7 @@ function parseArgs(argv) {
     else if (arg === "--submit") args.submit = true;
     else if (arg === "--skip-f120") args.skipF120 = true;
     else if (arg === "--skip-f241") args.skipF241 = true;
+    else if (arg === "--force") args.force = true;
     else if (arg === "--year") args.year = Number(argv[++i]);
     else if (arg === "--month") args.month = Number(argv[++i]);
   }
@@ -120,8 +125,154 @@ function periodKey(period) {
   return `${String(period.month).padStart(2, "0")}/${period.year}`;
 }
 
+function periodStateKey(period) {
+  return `${period.year}-${String(period.month).padStart(2, "0")}`;
+}
+
+async function loadFormState(filePath = formStateFile) {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    if (error.code === "ENOENT") return {};
+    throw error;
+  }
+}
+
+async function saveFormState(state, filePath = formStateFile) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(state, null, 2), "utf8");
+}
+
+async function getFormStatus(period, form, filePath = formStateFile) {
+  const state = await loadFormState(filePath);
+  const entry = state[periodStateKey(period)];
+  return entry && entry[form] ? entry[form] : null;
+}
+
+async function setFormStatus(period, form, status, extra = {}, filePath = formStateFile) {
+  const state = await loadFormState(filePath);
+  const key = periodStateKey(period);
+  state[key] = state[key] || {};
+  state[key][form] = {
+    status,
+    updated_at: new Date().toISOString(),
+    ...extra
+  };
+  await saveFormState(state, filePath);
+}
+
+async function runFormWithStateTracking({ formName, period, submit, force, fn }) {
+  if (submit && !force) {
+    const previous = await getFormStatus(period, formName);
+    if (previous && previous.status === "presentado") {
+      console.log(`${formName}: ya marcado como presentado para ${periodKey(period)}. Saltando (use --force para reintentar).`);
+      return { skipped: true, reason: "already-presented" };
+    }
+    if (previous && previous.status === "error") {
+      throw new Error(`${formName}: estado 'error' previo para ${periodKey(period)}. Revise artifacts/ y use --force para reintentar.`);
+    }
+  }
+
+  if (submit) {
+    await setFormStatus(period, formName, "iniciado").catch(error => {
+      console.log(`No se pudo persistir estado 'iniciado' de ${formName}: ${error.message}`);
+    });
+  }
+
+  try {
+    const result = await fn();
+    if (submit) {
+      await setFormStatus(period, formName, "presentado").catch(error => {
+        console.log(`No se pudo persistir estado 'presentado' de ${formName}: ${error.message}`);
+      });
+    }
+    return result;
+  } catch (error) {
+    if (submit) {
+      await setFormStatus(period, formName, "error", { error: error.message }).catch(() => {});
+    }
+    throw error;
+  }
+}
+
 async function ensureArtifactsDir() {
   await fs.mkdir(artifactsDir, { recursive: true });
+}
+
+function escapeTelegramHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+async function sendTelegramMessage(text, { token, chatId, referencia = "" } = {}) {
+  const finalToken = token || process.env.MARANGATU_TELEGRAM_TOKEN;
+  const finalChatId = chatId || process.env.MARANGATU_TELEGRAM_CHAT_ID;
+
+  if (!finalToken || !finalChatId) {
+    console.log(`Telegram skipped (token/chat_id no configurados)${referencia ? ` ref=${referencia}` : ""}.`);
+    return false;
+  }
+
+  const url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
+  const body = JSON.stringify({
+    chat_id: finalChatId,
+    text,
+    parse_mode: "HTML",
+    disable_web_page_preview: true
+  });
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (response.ok) return true;
+
+      const detail = await response.text().catch(() => "");
+      if (response.status === 429 && attempt < 2) {
+        console.log(`Telegram 429, esperando 10s antes de reintentar (intento ${attempt + 1}/3).`);
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        continue;
+      }
+      console.log(`Telegram fallo HTTP ${response.status}: ${detail.slice(0, 200)}`);
+      return false;
+    } catch (error) {
+      console.log(`Telegram error de red (intento ${attempt + 1}/3): ${error.message}`);
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  }
+  return false;
+}
+
+function buildResultSummary({ period, mode, results }) {
+  const statusIcon = result => {
+    if (result.skipped) return "⏭️";
+    if (result.error) return "❌";
+    return "✅";
+  };
+
+  const lines = [`<b>[MARANGATU]</b> Periodo ${escapeTelegramHtml(periodKey(period))}`];
+  for (const result of results) {
+    const detail = result.error
+      ? ` — ${escapeTelegramHtml(result.error)}`
+      : result.skippedReason
+        ? ` (${escapeTelegramHtml(result.skippedReason)})`
+        : "";
+    lines.push(`${statusIcon(result)} <b>${escapeTelegramHtml(result.form)}</b>: ${escapeTelegramHtml(result.status)}${detail}`);
+    if (result.justificante) {
+      lines.push(`   Justificante: ${escapeTelegramHtml(result.justificante)}`);
+    }
+  }
+  lines.push("", `Modo: ${escapeTelegramHtml(mode)}`);
+  return lines.join("\n");
 }
 
 async function saveScreenshot(page, name) {
@@ -143,6 +294,15 @@ async function checkpoint(page, name) {
   const html = await saveHtml(page, name).catch(() => undefined);
   if (png) console.log(`Screenshot: ${png}`);
   if (html) console.log(`HTML: ${html}`);
+}
+
+async function saveJustificante(page, period, formName) {
+  const periodDir = path.join(presentacionesDir, periodStateKey(period));
+  await fs.mkdir(periodDir, { recursive: true });
+  const filePath = path.join(periodDir, `${formName}.png`);
+  await page.screenshot({ path: filePath, fullPage: true });
+  console.log(`Justificante guardado: ${filePath}`);
+  return filePath;
 }
 
 async function showSubmitDisabledAlert(page, formName, detail) {
@@ -271,6 +431,11 @@ async function prepareFormulario120(page, period, submit) {
     await safeClick(page, confirm, "Confirmar F120");
   }
   await checkpoint(page, "05-f120-submitted");
+  const justificante = await saveJustificante(page, period, "F120").catch(error => {
+    console.log(`No se pudo guardar justificante F120: ${error.message}`);
+    return undefined;
+  });
+  return justificante ? { justificante } : undefined;
 }
 
 async function prepareFormulario241(page, period, submit) {
@@ -293,13 +458,34 @@ async function prepareFormulario241(page, period, submit) {
     return;
   }
 
+  const submitButton = talonPage
+    .locator('button[data-ng-click^="vm.procesar"]')
+    .filter({ hasText: /Presentar\s+declaraci.n/i })
+    .first();
+  await submitButton.waitFor({ state: "visible", timeout: 30000 });
+  await checkpoint(talonPage, "09-f241-submit-ready");
+
   if (!submit) {
     await showSubmitDisabledAlert(talonPage, "F241", "Hay talones pendientes, pero el script se detuvo antes de confirmar la presentacion.");
     console.log("F241 stopped before final confirmation because submit mode is off.");
     return;
   }
 
-  throw new Error("F241 pending talons were found, but the final confirmation button is not validated yet.");
+  await safeClick(talonPage, submitButton, "Presentar declaracion F241");
+  await checkpoint(talonPage, "10-f241-submit-clicked");
+
+  const popupAccept = talonPage
+    .locator('button.btn-primary[type="button"]')
+    .filter({ hasText: /^\s*Aceptar\s*$/i })
+    .first();
+  await popupAccept.waitFor({ state: "visible", timeout: 20000 });
+  await safeClick(talonPage, popupAccept, "Aceptar popup F241");
+  await checkpoint(talonPage, "11-f241-popup-accepted");
+  const justificante = await saveJustificante(talonPage, period, "F241").catch(error => {
+    console.log(`No se pudo guardar justificante F241: ${error.message}`);
+    return undefined;
+  });
+  return justificante ? { justificante } : undefined;
 }
 
 async function openFormulario241Gestion(page) {
@@ -478,15 +664,58 @@ async function main() {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
 
+  const results = [];
+  let runError;
   try {
     await login(page);
-    if (!args.skipF120) await prepareFormulario120(page, period, submit);
-    if (!args.skipF241) await prepareFormulario241(page, period, submit);
+    for (const formName of ["F120", "F241"]) {
+      const skipFlag = formName === "F120" ? args.skipF120 : args.skipF241;
+      if (skipFlag) {
+        results.push({ form: formName, status: "saltado por flag", skipped: true, skippedReason: "skip flag" });
+        continue;
+      }
+      try {
+        const outcome = await runFormWithStateTracking({
+          formName,
+          period,
+          submit,
+          force: args.force,
+          fn: () => formName === "F120"
+            ? prepareFormulario120(page, period, submit)
+            : prepareFormulario241(page, period, submit)
+        });
+        if (outcome && outcome.skipped) {
+          results.push({ form: formName, status: "ya presentado", skipped: true, skippedReason: outcome.reason || "estado previo" });
+        } else {
+          results.push({
+            form: formName,
+            status: submit ? "presentado" : "dry-run ok",
+            justificante: outcome && outcome.justificante
+          });
+        }
+      } catch (error) {
+        results.push({ form: formName, status: "error", error: error.message });
+        runError = error;
+        break;
+      }
+    }
     await checkpoint(page, "99-final-state");
   } finally {
     await context.close();
     await browser.close();
   }
+
+  const mode = submit ? "submit" : "dry-run";
+  const shouldNotify = submit || Boolean(runError);
+  if (shouldNotify) {
+    const summary = buildResultSummary({ period, mode, results });
+    console.log(`Resumen Telegram:\n${summary}`);
+    await sendTelegramMessage(summary, { referencia: `marangatu-${periodStateKey(period)}` });
+  } else {
+    console.log("Telegram skipped (dry-run sin errores).");
+  }
+
+  if (runError) throw runError;
 }
 
 const isCliRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -501,5 +730,14 @@ if (isCliRun) {
 export {
   datePartsInTimeZone,
   previousMonthPeriod,
-  targetPeriod
+  targetPeriod,
+  periodStateKey,
+  loadFormState,
+  saveFormState,
+  getFormStatus,
+  setFormStatus,
+  runFormWithStateTracking,
+  escapeTelegramHtml,
+  buildResultSummary,
+  sendTelegramMessage
 };

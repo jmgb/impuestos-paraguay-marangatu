@@ -6,7 +6,7 @@
   "scripts": {
     "run": "node src/marangatu.js",
     "dry-run": "node src/marangatu.js --dry-run",
-    "test": "node scripts/test-period.mjs",
+    "test": "node scripts/test-period.mjs && node scripts/test-state.mjs && node scripts/test-telegram.mjs",
     "clean:artifacts": "powershell -ExecutionPolicy Bypass -File scripts/clear-artifacts.ps1",
     "register-task": "powershell -ExecutionPolicy Bypass -File scripts/register-task.ps1",
     "schedule-check": "powershell -ExecutionPolicy Bypass -File scripts/run-monthly-check.ps1"
