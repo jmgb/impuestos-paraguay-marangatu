@@ -32,9 +32,10 @@ MARANGATU_SUBMIT=false
 MARANGATU_ARTIFACTS_DIR=artifacts
 MARANGATU_SLOWMO_MS=120
 MARANGATU_EXPECTED_NAME=
+MARANGATU_F241_GESTION_URL=
 ```
 
-`MARANGATU_SUBMIT=false` es deliberado: prepara el flujo, toma capturas y evita pulsar botones finales de presentacion. F241 esta bloqueado incluso con `--submit` hasta validar su URL/request real.
+`MARANGATU_SUBMIT=false` es deliberado: prepara el flujo, toma capturas y evita pulsar botones finales de presentacion. F241 selecciona ano/mes, pero si encuentra talones pendientes el boton final sigue bloqueado hasta validar ese selector.
 
 ## Ejecucion Rapida
 
@@ -109,11 +110,13 @@ F120:
 F241:
 
 - Entrar al home
-- Abrir la segunda entrada de menu `Declaraciones Informativas`
-- Opcion visible: `Gestion De Comprobantes Informativos`
-- Durante la exploracion, el DOM no expuso `href` estable para esa opcion y el click no cambio de pantalla
-- Siguiente mejora: capturar evento JavaScript o request de red al hacer click manualmente en Chrome
-- El codigo falla explicitamente si se intenta F241 con `--submit`, para evitar una presentacion parcial o accidental.
+- Abrir `gestionComprobantesVirtuales.do?_cyp=...`
+- Click/doble click en la tarjeta `Confirmar Presentación`
+- Se abre `gdi/presentacionTalonResumen.do?_cyp=...`
+- Seleccionar `select[name="anho"]`
+- Seleccionar `select[name="mes"]`
+- Si aparece `No existen talones pendientes de presentación`, no hay nada que confirmar
+- Si hay talones pendientes, el codigo falla antes del boton final hasta validar ese selector
 
 ## Capturas y Evidencia
 

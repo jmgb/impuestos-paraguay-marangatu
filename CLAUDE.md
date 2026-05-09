@@ -30,7 +30,7 @@ Automatización Playwright (Node.js, ESM) que prepara las declaraciones mensuale
 3. Seleccionar **Año** y **Mes**
 4. **Confirmar Presentación** (botón final, sólo con `--submit`)
 
-Estado del flujo automatizado: F120 llega hasta `Abrir Declaración` en `dry-run` y, con `--submit`, intenta el botón final + confirmación. F241 sólo localiza el menú `Declaraciones Informativas → Gestion De Comprobantes Informativos`; el click no expone `href` ni dispara navegación detectable, así que el `dry-run` se detiene ahí. F241 falla explícitamente si `submit=true`; antes de avanzar F241, capturar manualmente la URL/request real (ver `docs/discovery-notes.md`).
+Estado del flujo automatizado: F120 llega hasta `Abrir Declaración` en `dry-run` y, con `--submit`, intenta el botón final + confirmación. F241 abre `gestionComprobantesVirtuales.do?_cyp=...`, entra a la tarjeta `Confirmar Presentación`, selecciona `select[name="anho"]` y `select[name="mes"]`, y se detiene si no hay talones pendientes o antes del botón final si aparecen pendientes.
 
 ## Comandos
 
@@ -55,7 +55,7 @@ Hay una prueba ligera de cálculo de período en `scripts/test-period.mjs`. La v
 
 **Punto de entrada único**: `src/marangatu.js` (ESM, Playwright + dotenv). Todo el flujo vive en ese archivo: parseo de args, login, F120, F241, checkpoints. No hay capa de abstracción de páginas — los selectores están inline.
 
-**Doble seguro contra presentación accidental**: el envío real sólo ocurre si `--submit` o `MARANGATU_SUBMIT=true` Y `--dry-run` está ausente (ver `main()`). Es deliberado: `MARANGATU_SUBMIT=false` en `.env` es la postura por defecto. F241 tiene un guardarraíl adicional y falla con `submit=true` hasta que se valide su navegación real. **No quitar estos guardarraíles al refactorizar.**
+**Doble seguro contra presentación accidental**: el envío real sólo ocurre si `--submit` o `MARANGATU_SUBMIT=true` Y `--dry-run` está ausente (ver `main()`). Es deliberado: `MARANGATU_SUBMIT=false` en `.env` es la postura por defecto. F241 tiene un guardarraíl adicional: si aparecen talones pendientes, falla antes del botón final hasta que se valide ese selector. **No quitar estos guardarraíles al refactorizar.**
 
 **Selectores frágiles y sesión-dependientes**:
 - El `href` real de `Presentar Declaracion` cambia por sesión (`recibirDDJJContribuyente.do?_cyp=...`). Hay que leerlo del DOM cada vez (`findCommonOptionHref`).

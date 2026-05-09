@@ -14,6 +14,8 @@ const artifactsDir = path.resolve(rootDir, process.env.MARANGATU_ARTIFACTS_DIR |
 const baseUrl = "https://marangatu.set.gov.py/eset/";
 const loginUrl = `${baseUrl}login`;
 const defaultTimeZone = "Europe/Madrid";
+const f241GestionPath = "gestionComprobantesVirtuales.do";
+const f241TalonPath = "gdi/presentacionTalonResumen.do";
 
 const monthLabels = [
   "Enero",
@@ -185,6 +187,13 @@ async function findCommonOptionHref(page, optionName) {
   return new URL(href, baseUrl).toString();
 }
 
+function findMarangatuUrlInHtml(html, pathFragment) {
+  const escapedPath = pathFragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = html.match(new RegExp(`(?:/eset/)?${escapedPath}\\?_cyp=[^"'\\s<>]+`));
+  if (!match) return undefined;
+  return new URL(match[0].replace(/^\/eset\//, ""), baseUrl).toString();
+}
+
 async function openPresentDeclaration(page) {
   const href = await findCommonOptionHref(page, "Presentar Declaracion")
     .catch(() => findCommonOptionHref(page, "Presentar Declaración"));
@@ -250,13 +259,34 @@ async function prepareFormulario120(page, period, submit) {
 }
 
 async function prepareFormulario241(page, period, submit) {
-  if (submit) {
-    throw new Error(
-      "F241 submit is intentionally disabled until Gestion De Comprobantes Informativos has a validated URL/request path."
-    );
+  console.log(`Preparing F241 talon presentation for ${periodKey(period)}.`);
+  const gestionPage = await openFormulario241Gestion(page);
+  await checkpoint(gestionPage, "06-f241-gestion");
+
+  const talonPage = await openFormulario241Talon(gestionPage);
+  await checkpoint(talonPage, "07-f241-talon-opened");
+
+  await talonPage.locator('select[name="anho"]').waitFor({ state: "visible", timeout: 20000 });
+  await talonPage.locator('select[name="anho"]').selectOption(String(period.year));
+  await talonPage.locator('select[name="mes"]').waitFor({ state: "visible", timeout: 20000 });
+  await talonPage.locator('select[name="mes"]').selectOption(String(period.month));
+  await waitForMarangatu(talonPage);
+  await checkpoint(talonPage, "08-f241-period-selected");
+
+  if (await talonPage.getByText("No existen talones pendientes de presentación", { exact: false }).isVisible().catch(() => false)) {
+    console.log(`F241 has no pending talons for ${periodKey(period)}.`);
+    return;
   }
 
-  console.log(`Opening F241 menu candidate for ${periodKey(period)}.`);
+  if (!submit) {
+    console.log("F241 stopped before final confirmation because submit mode is off.");
+    return;
+  }
+
+  throw new Error("F241 pending talons were found, but the final confirmation button is not validated yet.");
+}
+
+async function openFormulario241Gestion(page) {
   await openHome(page);
 
   const category = page.getByText("Declaraciones Informativas", { exact: false });
@@ -269,10 +299,47 @@ async function prepareFormulario241(page, period, submit) {
   await page.waitForTimeout(1500);
   await checkpoint(page, "06-f241-category-open");
 
+  const dynamicUrl = findMarangatuUrlInHtml(await page.content(), f241GestionPath);
+  const fallbackUrl = env("MARANGATU_F241_GESTION_URL", "");
+  const gestionUrl = dynamicUrl || fallbackUrl;
+  if (gestionUrl) {
+    console.log(`Opening F241 Gestion URL: ${gestionUrl}`);
+    await page.goto(gestionUrl, { waitUntil: "domcontentloaded" });
+    await waitForMarangatu(page);
+    await page.getByRole("heading", { name: /Gestión de Comprobantes|Gestion de Comprobantes/ })
+      .waitFor({ state: "visible", timeout: 20000 });
+    return page;
+  }
+
   const option = page.getByText("Gestion De Comprobantes Informativos", { exact: true });
   await option.waitFor({ state: "visible", timeout: 10000 });
+  await option.click();
+  await waitForMarangatu(page);
+  await page.getByRole("heading", { name: /Gestión de Comprobantes|Gestion de Comprobantes/ })
+    .waitFor({ state: "visible", timeout: 20000 });
+  return page;
+}
 
-  console.log("F241 menu option is visible. Dry-run stops here because the portal did not expose a stable direct href during exploration.");
+async function openFormulario241Talon(gestionPage) {
+  const popupPromise = gestionPage.waitForEvent("popup", { timeout: 10000 }).catch(() => undefined);
+  await gestionPage.getByText("Confirmar Presentación", { exact: true }).dblclick();
+  const popup = await popupPromise;
+  const talonPage = popup || gestionPage;
+  await talonPage.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
+  await waitForMarangatu(talonPage);
+
+  if (!new URL(talonPage.url()).pathname.endsWith(f241TalonPath)) {
+    const dynamicTalonUrl = findMarangatuUrlInHtml(await gestionPage.content(), f241TalonPath);
+    if (!dynamicTalonUrl) {
+      throw new Error("Could not open F241 talon presentation page.");
+    }
+    await talonPage.goto(dynamicTalonUrl, { waitUntil: "domcontentloaded" });
+    await waitForMarangatu(talonPage);
+  }
+
+  await talonPage.getByRole("heading", { name: /Presentación de Talón|Presentacion de Talon/ })
+    .waitFor({ state: "visible", timeout: 20000 });
+  return talonPage;
 }
 
 async function main() {

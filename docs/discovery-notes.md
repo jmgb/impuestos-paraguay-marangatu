@@ -72,4 +72,29 @@ La opcion aparece visualmente en el menu lateral, pero durante esta exploracion 
 5. Capturar URL final, HTML y/o request de red.
 6. Codificar esa ruta en `openInformativeReceipts`.
 
-Hasta que ese paso este validado, el script debe fallar si `F241` se ejecuta con `--submit`.
+La URL correcta de gestion capturada fue:
+
+```text
+gestionComprobantesVirtuales.do?_cyp=...
+```
+
+La tarjeta `Confirmar Presentación` abre una nueva pestana:
+
+```text
+gdi/presentacionTalonResumen.do?_cyp=...
+```
+
+La pantalla de talon contiene:
+
+```html
+<select name="anho">...</select>
+<select name="mes">...</select>
+```
+
+Para el periodo probado, tras elegir ano/mes la pantalla mostro:
+
+```text
+No existen talones pendientes de presentación
+```
+
+Si en otro periodo aparecen talones pendientes, falta validar el selector exacto del boton final antes de permitir `--submit`.
