@@ -77,6 +77,9 @@ function validatePeriod(period) {
 }
 
 function targetPeriod(args) {
+  if ((args.year && !args.month) || (!args.year && args.month)) {
+    throw new Error("--year y --month deben pasarse juntos. Sin ambos, se usa el mes anterior por defecto.");
+  }
   const period = args.year && args.month
     ? { year: args.year, month: args.month }
     : previousMonthPeriod();
@@ -85,11 +88,14 @@ function targetPeriod(args) {
 }
 
 function previousMonthPeriod(now = new Date()) {
-  const previousMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
-  return {
-    year: previousMonth.getUTCFullYear(),
-    month: previousMonth.getUTCMonth() + 1
-  };
+  // Hora local (la maquina Windows corre en TZ Madrid). Usar UTC mete bugs
+  // el dia 1 de madrugada cuando UTC todavia esta en el mes anterior.
+  const year = now.getFullYear();
+  const monthIndex = now.getMonth(); // 0=Ene
+  if (monthIndex === 0) {
+    return { year: year - 1, month: 12 };
+  }
+  return { year, month: monthIndex };
 }
 
 function periodKey(period) {
