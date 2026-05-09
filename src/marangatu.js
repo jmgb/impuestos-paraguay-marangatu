@@ -163,12 +163,12 @@ async function setFormStatus(period, form, status, extra = {}, filePath = formSt
   await saveFormState(state, filePath);
 }
 
-async function runFormWithStateTracking({ formName, period, submit, force, fn }) {
+async function runFormWithStateTracking({ formName, period, submit, force, fn, stateFilePath = formStateFile }) {
   if (submit && !force) {
-    const previous = await getFormStatus(period, formName);
-    if (previous && previous.status === "presentado") {
-      console.log(`${formName}: ya marcado como presentado para ${periodKey(period)}. Saltando (use --force para reintentar).`);
-      return { skipped: true, reason: "already-presented" };
+    const previous = await getFormStatus(period, formName, stateFilePath);
+    if (previous && ["presentado", "sin-pendientes"].includes(previous.status)) {
+      console.log(`${formName}: ya tiene estado terminal '${previous.status}' para ${periodKey(period)}. Saltando (use --force para reintentar).`);
+      return { skipped: true, reason: previous.status };
     }
     if (previous && previous.status === "error") {
       throw new Error(`${formName}: estado 'error' previo para ${periodKey(period)}. Revise artifacts/ y use --force para reintentar.`);
@@ -176,7 +176,7 @@ async function runFormWithStateTracking({ formName, period, submit, force, fn })
   }
 
   if (submit) {
-    await setFormStatus(period, formName, "iniciado").catch(error => {
+    await setFormStatus(period, formName, "iniciado", {}, stateFilePath).catch(error => {
       console.log(`No se pudo persistir estado 'iniciado' de ${formName}: ${error.message}`);
     });
   }
@@ -184,14 +184,15 @@ async function runFormWithStateTracking({ formName, period, submit, force, fn })
   try {
     const result = await fn();
     if (submit) {
-      await setFormStatus(period, formName, "presentado").catch(error => {
-        console.log(`No se pudo persistir estado 'presentado' de ${formName}: ${error.message}`);
+      const finalStatus = result && result.stateStatus ? result.stateStatus : "presentado";
+      await setFormStatus(period, formName, finalStatus, {}, stateFilePath).catch(error => {
+        console.log(`No se pudo persistir estado '${finalStatus}' de ${formName}: ${error.message}`);
       });
     }
     return result;
   } catch (error) {
     if (submit) {
-      await setFormStatus(period, formName, "error", { error: error.message }).catch(() => {});
+      await setFormStatus(period, formName, "error", { error: error.message }, stateFilePath).catch(() => {});
     }
     throw error;
   }
@@ -405,7 +406,7 @@ async function prepareFormulario120(page, period, submit) {
   if (await maybeAlreadyPresented(page, period)) {
     console.log(`F120 appears in Ultimas Declaraciones for ${periodKey(period)}. Skipping duplicate preparation.`);
     await checkpoint(page, "03-f120-already-presented");
-    return;
+    return { status: "ya presentado en portal", stateStatus: "presentado" };
   }
 
   console.log(`Preparing F120 for ${periodKey(period)}.`);
@@ -435,7 +436,7 @@ async function prepareFormulario120(page, period, submit) {
     console.log(`No se pudo guardar justificante F120: ${error.message}`);
     return undefined;
   });
-  return justificante ? { justificante } : undefined;
+  return { status: "presentado", justificante };
 }
 
 async function prepareFormulario241(page, period, submit) {
@@ -455,7 +456,7 @@ async function prepareFormulario241(page, period, submit) {
 
   if (await talonPage.getByText("No existen talones pendientes de presentación", { exact: false }).isVisible().catch(() => false)) {
     console.log(`F241 has no pending talons for ${periodKey(period)}.`);
-    return;
+    return { status: "sin pendientes", stateStatus: "sin-pendientes" };
   }
 
   const submitButton = talonPage
@@ -485,7 +486,7 @@ async function prepareFormulario241(page, period, submit) {
     console.log(`No se pudo guardar justificante F241: ${error.message}`);
     return undefined;
   });
-  return justificante ? { justificante } : undefined;
+  return { status: "presentado", justificante };
 }
 
 async function openFormulario241Gestion(page) {
@@ -689,7 +690,7 @@ async function main() {
         } else {
           results.push({
             form: formName,
-            status: submit ? "presentado" : "dry-run ok",
+            status: outcome && outcome.status ? outcome.status : (submit ? "presentado" : "dry-run ok"),
             justificante: outcome && outcome.justificante
           });
         }
@@ -700,9 +701,18 @@ async function main() {
       }
     }
     await checkpoint(page, "99-final-state");
+  } catch (error) {
+    if (!runError) {
+      runError = error;
+      results.push({ form: "GENERAL", status: "error", error: error.message });
+    }
   } finally {
-    await context.close();
-    await browser.close();
+    await context.close().catch(error => {
+      console.log(`No se pudo cerrar el contexto del navegador: ${error.message}`);
+    });
+    await browser.close().catch(error => {
+      console.log(`No se pudo cerrar el navegador: ${error.message}`);
+    });
   }
 
   const mode = submit ? "submit" : "dry-run";

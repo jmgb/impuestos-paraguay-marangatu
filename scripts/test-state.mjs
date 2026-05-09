@@ -44,21 +44,35 @@ const okResult = await runFormWithStateTracking({
   period: { year: 2026, month: 4 },
   submit: true,
   force: false,
+  stateFilePath: stateFile,
   fn: async () => { calls += 1; return "ok"; }
 });
 assert.equal(okResult, "ok");
 assert.equal(calls, 1);
-assert.equal((await getFormStatus({ year: 2026, month: 4 }, "F120")).status, "presentado");
+assert.equal((await getFormStatus({ year: 2026, month: 4 }, "F120", stateFile)).status, "presentado");
 
 const skipped = await runFormWithStateTracking({
   formName: "F120",
   period: { year: 2026, month: 4 },
   submit: true,
   force: false,
+  stateFilePath: stateFile,
   fn: async () => { calls += 1; }
 });
 assert.equal(calls, 1, "fn must not run when state already presentado");
-assert.deepEqual(skipped, { skipped: true, reason: "already-presented" });
+assert.deepEqual(skipped, { skipped: true, reason: "presentado" });
+
+await setFormStatus({ year: 2026, month: 4 }, "F241", "sin-pendientes", {}, stateFile);
+const skippedNoPending = await runFormWithStateTracking({
+  formName: "F241",
+  period: { year: 2026, month: 4 },
+  submit: true,
+  force: false,
+  stateFilePath: stateFile,
+  fn: async () => { calls += 1; }
+});
+assert.equal(calls, 1, "fn must not run when state already sin-pendientes");
+assert.deepEqual(skippedNoPending, { skipped: true, reason: "sin-pendientes" });
 
 let dryRunCalls = 0;
 await runFormWithStateTracking({
@@ -66,17 +80,19 @@ await runFormWithStateTracking({
   period: { year: 2026, month: 4 },
   submit: false,
   force: false,
+  stateFilePath: stateFile,
   fn: async () => { dryRunCalls += 1; }
 });
 assert.equal(dryRunCalls, 1, "dry-run runs even if state says presentado");
 
-await setFormStatus({ year: 2026, month: 5 }, "F241", "error", { error: "previous" });
+await setFormStatus({ year: 2026, month: 5 }, "F241", "error", { error: "previous" }, stateFile);
 await assert.rejects(
   () => runFormWithStateTracking({
     formName: "F241",
     period: { year: 2026, month: 5 },
     submit: true,
     force: false,
+    stateFilePath: stateFile,
     fn: async () => {}
   }),
   /estado 'error' previo/
@@ -88,27 +104,28 @@ await runFormWithStateTracking({
   period: { year: 2026, month: 5 },
   submit: true,
   force: true,
-  fn: async () => { forcedCalls += 1; }
+  stateFilePath: stateFile,
+  fn: async () => { forcedCalls += 1; return { stateStatus: "sin-pendientes" }; }
 });
 assert.equal(forcedCalls, 1);
-assert.equal((await getFormStatus({ year: 2026, month: 5 }, "F241")).status, "presentado");
+assert.equal((await getFormStatus({ year: 2026, month: 5 }, "F241", stateFile)).status, "sin-pendientes");
 
-await setFormStatus({ year: 2026, month: 6 }, "F120", "iniciado");
+await setFormStatus({ year: 2026, month: 6 }, "F120", "iniciado", {}, stateFile);
 await assert.rejects(
   () => runFormWithStateTracking({
     formName: "F120",
     period: { year: 2026, month: 6 },
     submit: true,
     force: true,
+    stateFilePath: stateFile,
     fn: async () => { throw new Error("portal failure"); }
   }),
   /portal failure/
 );
-const failed = await getFormStatus({ year: 2026, month: 6 }, "F120");
+const failed = await getFormStatus({ year: 2026, month: 6 }, "F120", stateFile);
 assert.equal(failed.status, "error");
 assert.equal(failed.error, "portal failure");
 
 await fs.rm(tmpRoot, { recursive: true, force: true });
-await fs.rm(path.resolve(".state"), { recursive: true, force: true });
 
 console.log("State tests passed.");
