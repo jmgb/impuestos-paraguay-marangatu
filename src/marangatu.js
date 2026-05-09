@@ -145,6 +145,20 @@ async function checkpoint(page, name) {
   if (html) console.log(`HTML: ${html}`);
 }
 
+async function showSubmitDisabledAlert(page, formName, detail) {
+  const message = [
+    `${formName}: modo presentacion desactivado.`,
+    "MARANGATU_SUBMIT=false o falta --submit.",
+    detail
+  ].filter(Boolean).join("\n");
+
+  page.once("dialog", async dialog => {
+    console.log(`Alert shown: ${dialog.message()}`);
+    await dialog.accept();
+  });
+  await page.evaluate(alertMessage => window.alert(alertMessage), message);
+}
+
 async function waitForMarangatu(page) {
   await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(1200);
@@ -159,7 +173,7 @@ async function login(page) {
   console.log("Opening Marangatu login.");
   await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
 
-  await page.locator('input[placeholder="Usuario"]').fill(env("MARANGATU_USER"));
+  await page.locator("#usuario").fill(env("MARANGATU_USER"));
   await page.locator('input[type="password"]').fill(env("MARANGATU_PASSWORD"));
   await checkpoint(page, "01-login-filled");
 
@@ -168,7 +182,7 @@ async function login(page) {
 
   const userName = env("MARANGATU_EXPECTED_NAME", "");
   if (userName) {
-    await page.getByText(userName, { exact: false }).waitFor({ state: "visible", timeout: 20000 });
+    await page.getByRole("link", { name: userName, exact: true }).waitFor({ state: "visible", timeout: 20000 });
   }
   await page.locator('input[name="busqueda"], input[placeholder*="men"]').waitFor({ state: "visible", timeout: 20000 });
 
@@ -246,6 +260,7 @@ async function prepareFormulario120(page, period, submit) {
   await checkpoint(page, "04-f120-opened");
 
   if (!submit) {
+    await showSubmitDisabledAlert(page, "F120", "El script se detuvo antes de pulsar Presentar Declaracion.");
     console.log("F120 stopped before final submission because submit mode is off.");
     return;
   }
@@ -279,6 +294,7 @@ async function prepareFormulario241(page, period, submit) {
   }
 
   if (!submit) {
+    await showSubmitDisabledAlert(talonPage, "F241", "Hay talones pendientes, pero el script se detuvo antes de confirmar la presentacion.");
     console.log("F241 stopped before final confirmation because submit mode is off.");
     return;
   }
@@ -287,6 +303,116 @@ async function prepareFormulario241(page, period, submit) {
 }
 
 async function openFormulario241Gestion(page) {
+  await openFormulario241Menu(page);
+
+  const dynamicUrl = findMarangatuUrlInHtml(await page.content(), f241GestionPath);
+  const fallbackUrl = env("MARANGATU_F241_GESTION_URL", "");
+  const gestionUrl = dynamicUrl || fallbackUrl;
+  if (gestionUrl && await tryOpenFormulario241GestionUrl(page, gestionUrl)) {
+    return page;
+  }
+
+  await openFormulario241Menu(page);
+  const angularGestionUrl = await findF241GestionUrlFromAngularMenu(page);
+  if (angularGestionUrl && await tryOpenFormulario241GestionUrl(page, angularGestionUrl)) {
+    return page;
+  }
+
+  await clickF241GestionOption(page);
+  await waitForMarangatu(page);
+  await page.getByRole("heading", { name: /Gestión de Comprobantes|Gestion de Comprobantes/ })
+    .waitFor({ state: "visible", timeout: 20000 });
+  return page;
+}
+
+async function clickF241GestionOption(page) {
+  const optionText = "Gestion De Comprobantes Informativos";
+  const option = page.locator('[data-ng-click="vm.opcion(item.aplicacion)"]')
+    .filter({ hasText: optionText })
+    .first();
+
+  await option.waitFor({ state: "visible", timeout: 10000 });
+  await option.click();
+  await page.waitForTimeout(1500);
+
+  const opened = await page.getByRole("heading", { name: /Gestión de Comprobantes|Gestion de Comprobantes/ })
+    .isVisible()
+    .catch(() => false);
+  if (opened) return;
+
+  console.log("F241 Gestion menu click did not navigate; retrying through Angular controller.");
+  await page.evaluate(text => {
+    const angularRef = window.angular;
+    const menuRoot = document.querySelector('[data-ng-controller="MenuController as vm"]');
+    if (!angularRef || !menuRoot) throw new Error("Angular MenuController is not available.");
+
+    const scope = angularRef.element(menuRoot).scope();
+    const vm = scope && scope.vm;
+    const item = findAngularMenuItem(vm && vm.datos && vm.datos.menu, text);
+    if (!item) throw new Error(`Could not find menu option: ${text}`);
+
+    scope.$apply(() => vm.opcion(item.aplicacion));
+
+    function findAngularMenuItem(items, expectedText) {
+      if (!Array.isArray(items)) return undefined;
+      return items.find(item => {
+        const values = [
+          item && item.descripcion,
+          item && item.nombre,
+          item && item.titulo,
+          item && item.texto,
+          item && item.aplicacion && item.aplicacion.descripcion,
+          item && item.aplicacion && item.aplicacion.nombre,
+          item && item.aplicacion && item.aplicacion.titulo,
+          item && item.aplicacion && item.aplicacion.texto
+        ];
+        return values.filter(Boolean).some(value => String(value).includes(expectedText));
+      });
+    }
+  }, optionText);
+}
+
+async function findF241GestionUrlFromAngularMenu(page) {
+  const optionText = "Gestion De Comprobantes Informativos";
+  const url = await page.evaluate(text => {
+    const angularRef = window.angular;
+    const menuRoot = document.querySelector('[data-ng-controller="MenuController as vm"]');
+    if (!angularRef || !menuRoot) return "";
+
+    const scope = angularRef.element(menuRoot).scope();
+    const vm = scope && scope.vm;
+    const item = findAngularMenuItem(vm && vm.datos && vm.datos.menu, text);
+    if (!item) return "";
+
+    const rawUrl = item.url || (item.aplicacion && item.aplicacion.url) || "";
+    return rawUrl ? new URL(rawUrl, window.location.href).href : "";
+
+    function findAngularMenuItem(items, expectedText) {
+      if (!Array.isArray(items)) return undefined;
+      return items.find(item => {
+        const values = [
+          item && item.descripcion,
+          item && item.nombre,
+          item && item.titulo,
+          item && item.texto,
+          item && item.aplicacion && item.aplicacion.descripcion,
+          item && item.aplicacion && item.aplicacion.nombre,
+          item && item.aplicacion && item.aplicacion.titulo,
+          item && item.aplicacion && item.aplicacion.texto
+        ];
+        return values.filter(Boolean).some(value => String(value).includes(expectedText));
+      });
+    }
+  }, optionText).catch(error => {
+    console.log(`Could not read F241 Gestion URL from Angular menu: ${error.message}`);
+    return "";
+  });
+
+  if (url) console.log(`Found F241 Gestion URL in Angular menu: ${url}`);
+  return url;
+}
+
+async function openFormulario241Menu(page) {
   await openHome(page);
 
   const category = page.getByText("Declaraciones Informativas", { exact: false });
@@ -298,26 +424,21 @@ async function openFormulario241Gestion(page) {
   await category.nth(1).click();
   await page.waitForTimeout(1500);
   await checkpoint(page, "06-f241-category-open");
+}
 
-  const dynamicUrl = findMarangatuUrlInHtml(await page.content(), f241GestionPath);
-  const fallbackUrl = env("MARANGATU_F241_GESTION_URL", "");
-  const gestionUrl = dynamicUrl || fallbackUrl;
-  if (gestionUrl) {
-    console.log(`Opening F241 Gestion URL: ${gestionUrl}`);
-    await page.goto(gestionUrl, { waitUntil: "domcontentloaded" });
-    await waitForMarangatu(page);
-    await page.getByRole("heading", { name: /Gestión de Comprobantes|Gestion de Comprobantes/ })
-      .waitFor({ state: "visible", timeout: 20000 });
-    return page;
-  }
-
-  const option = page.getByText("Gestion De Comprobantes Informativos", { exact: true });
-  await option.waitFor({ state: "visible", timeout: 10000 });
-  await option.click();
+async function tryOpenFormulario241GestionUrl(page, gestionUrl) {
+  console.log(`Opening F241 Gestion URL: ${gestionUrl}`);
+  await page.goto(gestionUrl, { waitUntil: "domcontentloaded" });
   await waitForMarangatu(page);
-  await page.getByRole("heading", { name: /Gestión de Comprobantes|Gestion de Comprobantes/ })
-    .waitFor({ state: "visible", timeout: 20000 });
-  return page;
+
+  const opened = await page.getByRole("heading", { name: /Gestión de Comprobantes|Gestion de Comprobantes/ })
+    .isVisible()
+    .catch(() => false);
+  if (!opened) {
+    console.log("F241 Gestion URL did not open in this session; falling back to menu click.");
+    await checkpoint(page, "06-f241-gestion-url-failed");
+  }
+  return opened;
 }
 
 async function openFormulario241Talon(gestionPage) {
