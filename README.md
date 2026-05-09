@@ -31,9 +31,10 @@ MARANGATU_HEADLESS=false
 MARANGATU_SUBMIT=false
 MARANGATU_ARTIFACTS_DIR=artifacts
 MARANGATU_SLOWMO_MS=120
+MARANGATU_EXPECTED_NAME=
 ```
 
-`MARANGATU_SUBMIT=false` es deliberado: prepara el flujo, toma capturas y evita pulsar botones finales de presentacion. Para presentar realmente, usa `--submit` o `MARANGATU_SUBMIT=true`.
+`MARANGATU_SUBMIT=false` es deliberado: prepara el flujo, toma capturas y evita pulsar botones finales de presentacion. F241 esta bloqueado incluso con `--submit` hasta validar su URL/request real.
 
 ## Ejecucion Rapida
 
@@ -41,6 +42,18 @@ Prueba visible sin presentar:
 
 ```powershell
 npm.cmd run dry-run
+```
+
+Tests de calculo de periodo:
+
+```powershell
+npm.cmd test
+```
+
+Limpiar capturas/HTML sensibles guardados en `artifacts/`:
+
+```powershell
+npm.cmd run clean:artifacts
 ```
 
 Probar solo F120 para un periodo concreto:
@@ -55,10 +68,10 @@ Probar solo el menu F241:
 node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f120
 ```
 
-Ejecucion real cuando el flujo este validado:
+Ejecucion real de F120 cuando el flujo este validado:
 
 ```powershell
-node src/marangatu.js --year 2026 --month 5 --submit
+node src/marangatu.js --year 2026 --month 5 --submit --skip-f241
 ```
 
 ## Programacion Mensual
@@ -70,6 +83,8 @@ npm.cmd run register-task
 ```
 
 La tarea revisa cada 30 minutos, pero solo ejecuta cuando en Madrid son las `12:00` del dia `1`. Guarda `.state/last-run.txt` para no repetir el mismo mes.
+
+Importante: la tarea no pasa `--submit`; solo presentara si la maquina de ejecucion tiene `MARANGATU_SUBMIT=true`. No actives esa variable hasta que F241 este validado o uses `--skip-f241` en una ejecucion manual de F120.
 
 ## Flujo Validado
 
@@ -98,6 +113,7 @@ F241:
 - Opcion visible: `Gestion De Comprobantes Informativos`
 - Durante la exploracion, el DOM no expuso `href` estable para esa opcion y el click no cambio de pantalla
 - Siguiente mejora: capturar evento JavaScript o request de red al hacer click manualmente en Chrome
+- El codigo falla explicitamente si se intenta F241 con `--submit`, para evitar una presentacion parcial o accidental.
 
 ## Capturas y Evidencia
 
@@ -107,3 +123,5 @@ Cada ejecucion deja evidencia en `artifacts/`:
 - HTML de cada checkpoint
 
 Usa esas capturas para ajustar selectores sin volver a explorar desde cero.
+
+Cuando ya no las necesites, limpia `artifacts/` con `npm.cmd run clean:artifacts`; pueden contener datos fiscales visibles del portal.

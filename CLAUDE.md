@@ -30,7 +30,7 @@ Automatización Playwright (Node.js, ESM) que prepara las declaraciones mensuale
 3. Seleccionar **Año** y **Mes**
 4. **Confirmar Presentación** (botón final, sólo con `--submit`)
 
-Estado del flujo automatizado: F120 llega hasta `Abrir Declaración` en `dry-run` y, con `--submit`, intenta el botón final + confirmación. F241 sólo localiza el menú `Declaraciones Informativas → Gestion De Comprobantes Informativos`; el click no expone `href` ni dispara navegación detectable, así que el `dry-run` se detiene ahí. Antes de avanzar F241, capturar manualmente la URL/request real (ver `docs/discovery-notes.md`).
+Estado del flujo automatizado: F120 llega hasta `Abrir Declaración` en `dry-run` y, con `--submit`, intenta el botón final + confirmación. F241 sólo localiza el menú `Declaraciones Informativas → Gestion De Comprobantes Informativos`; el click no expone `href` ni dispara navegación detectable, así que el `dry-run` se detiene ahí. F241 falla explícitamente si `submit=true`; antes de avanzar F241, capturar manualmente la URL/request real (ver `docs/discovery-notes.md`).
 
 ## Comandos
 
@@ -39,21 +39,23 @@ npm.cmd install
 npx.cmd playwright install chromium     # solo si falta el navegador
 
 npm.cmd run dry-run                     # corrida visible sin presentar
+npm.cmd test                            # tests de calculo de periodo
+npm.cmd run clean:artifacts             # borra capturas/HTML locales sensibles
 node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f241   # solo F120
 node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f120   # solo F241
-node src/marangatu.js --year 2026 --month 5 --submit                # presentación real
+node src/marangatu.js --year 2026 --month 5 --submit --skip-f241    # presentación real F120
 npm.cmd run register-task               # registra la tarea programada de Windows
 ```
 
 Sin `--year/--month` el script usa el **mes anterior** (`previousMonthPeriod`).
 
-No hay test suite, linter ni build step. La validación es ejecutar el dry-run y revisar los PNG/HTML en `artifacts/`.
+Hay una prueba ligera de cálculo de período en `scripts/test-period.mjs`. La validación funcional sigue siendo ejecutar el dry-run y revisar los PNG/HTML en `artifacts/`.
 
 ## Arquitectura clave
 
 **Punto de entrada único**: `src/marangatu.js` (ESM, Playwright + dotenv). Todo el flujo vive en ese archivo: parseo de args, login, F120, F241, checkpoints. No hay capa de abstracción de páginas — los selectores están inline.
 
-**Doble seguro contra presentación accidental**: el envío real sólo ocurre si `--submit` o `MARANGATU_SUBMIT=true` Y `--dry-run` está ausente (ver `main()`). Es deliberado: `MARANGATU_SUBMIT=false` en `.env` es la postura por defecto. **No quitar este guardarraíl al refactorizar.**
+**Doble seguro contra presentación accidental**: el envío real sólo ocurre si `--submit` o `MARANGATU_SUBMIT=true` Y `--dry-run` está ausente (ver `main()`). Es deliberado: `MARANGATU_SUBMIT=false` en `.env` es la postura por defecto. F241 tiene un guardarraíl adicional y falla con `submit=true` hasta que se valide su navegación real. **No quitar estos guardarraíles al refactorizar.**
 
 **Selectores frágiles y sesión-dependientes**:
 - El `href` real de `Presentar Declaracion` cambia por sesión (`recibirDDJJContribuyente.do?_cyp=...`). Hay que leerlo del DOM cada vez (`findCommonOptionHref`).
@@ -63,7 +65,9 @@ No hay test suite, linter ni build step. La validación es ejecutar el dry-run y
 
 **Checkpoints**: cada paso relevante llama `checkpoint(page, "NN-nombre")`, que guarda PNG full-page + HTML en `artifacts/`. Mantener la numeración secuencial al añadir pasos — los archivos quedan ordenados alfabéticamente y eso es la herramienta principal de debug.
 
-**Programación mensual (Windows)**: `scripts/register-task.ps1` registra una tarea que ejecuta `run-monthly-check.ps1` cada 30 minutos. El script PowerShell sólo lanza Node si en **zona horaria Madrid** (`Romance Standard Time`) son las 12:00 del día 1, y guarda `.state/last-run.txt` con clave `yyyy-MM` para no repetir el mismo mes. Si se cambia la ventana o la TZ, hay que actualizar esa lógica, no la tarea programada.
+**Artifacts sensibles**: `artifacts/` esta gitignored, pero puede contener datos fiscales. Usar `npm.cmd run clean:artifacts` cuando las capturas/HTML ya no sean necesarios.
+
+**Programación mensual (Windows)**: `scripts/register-task.ps1` registra una tarea que ejecuta `run-monthly-check.ps1` cada 30 minutos. El script PowerShell sólo lanza Node si en **zona horaria Madrid** (`Romance Standard Time`) son las 12:00 del día 1, y guarda `.state/last-run.txt` con clave `yyyy-MM` para no repetir el mismo mes. Node calcula el período con `Europe/Madrid`, no con la zona local implícita. Si se cambia la ventana o la TZ, hay que actualizar esa lógica, no la tarea programada.
 
 ## Convenciones
 

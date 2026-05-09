@@ -71,3 +71,5 @@ La opcion aparece visualmente en el menu lateral, pero durante esta exploracion 
 4. Hacer click manual en `Gestion De Comprobantes Informativos`.
 5. Capturar URL final, HTML y/o request de red.
 6. Codificar esa ruta en `openInformativeReceipts`.
+
+Hasta que ese paso este validado, el script debe fallar si `F241` se ejecuta con `--submit`.

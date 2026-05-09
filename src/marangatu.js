@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import dotenv from "dotenv";
 import { chromium } from "playwright";
@@ -13,6 +13,7 @@ const artifactsDir = path.resolve(rootDir, process.env.MARANGATU_ARTIFACTS_DIR |
 
 const baseUrl = "https://marangatu.set.gov.py/eset/";
 const loginUrl = `${baseUrl}login`;
+const defaultTimeZone = "Europe/Madrid";
 
 const monthLabels = [
   "Enero",
@@ -77,25 +78,40 @@ function validatePeriod(period) {
 }
 
 function targetPeriod(args) {
-  if ((args.year && !args.month) || (!args.year && args.month)) {
+  const hasYear = args.year !== undefined;
+  const hasMonth = args.month !== undefined;
+  if (hasYear !== hasMonth) {
     throw new Error("--year y --month deben pasarse juntos. Sin ambos, se usa el mes anterior por defecto.");
   }
-  const period = args.year && args.month
+  const period = hasYear
     ? { year: args.year, month: args.month }
     : previousMonthPeriod();
   validatePeriod(period);
   return period;
 }
 
-function previousMonthPeriod(now = new Date()) {
-  // Hora local (la maquina Windows corre en TZ Madrid). Usar UTC mete bugs
-  // el dia 1 de madrugada cuando UTC todavia esta en el mes anterior.
-  const year = now.getFullYear();
-  const monthIndex = now.getMonth(); // 0=Ene
-  if (monthIndex === 0) {
+function datePartsInTimeZone(now, timeZone = defaultTimeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric"
+  }).formatToParts(now);
+
+  const value = type => Number(parts.find(part => part.type === type)?.value);
+  return {
+    year: value("year"),
+    month: value("month"),
+    day: value("day")
+  };
+}
+
+function previousMonthPeriod(now = new Date(), timeZone = defaultTimeZone) {
+  const { year, month } = datePartsInTimeZone(now, timeZone);
+  if (month === 1) {
     return { year: year - 1, month: 12 };
   }
-  return { year, month: monthIndex };
+  return { year, month: month - 1 };
 }
 
 function periodKey(period) {
@@ -151,9 +167,8 @@ async function login(page) {
   const userName = env("MARANGATU_EXPECTED_NAME", "");
   if (userName) {
     await page.getByText(userName, { exact: false }).waitFor({ state: "visible", timeout: 20000 });
-  } else {
-    await page.getByPlaceholder("Busqueda opcion de menu", { exact: false }).waitFor({ state: "visible", timeout: 20000 }).catch(() => {});
   }
+  await page.locator('input[name="busqueda"], input[placeholder*="men"]').waitFor({ state: "visible", timeout: 20000 });
 
   await checkpoint(page, "02-home-after-login");
   console.log("Login completed.");
@@ -235,6 +250,12 @@ async function prepareFormulario120(page, period, submit) {
 }
 
 async function prepareFormulario241(page, period, submit) {
+  if (submit) {
+    throw new Error(
+      "F241 submit is intentionally disabled until Gestion De Comprobantes Informativos has a validated URL/request path."
+    );
+  }
+
   console.log(`Opening F241 menu candidate for ${periodKey(period)}.`);
   await openHome(page);
 
@@ -251,24 +272,7 @@ async function prepareFormulario241(page, period, submit) {
   const option = page.getByText("Gestion De Comprobantes Informativos", { exact: true });
   await option.waitFor({ state: "visible", timeout: 10000 });
 
-  if (!submit) {
-    console.log("F241 menu option is visible. Dry-run stops here because the portal did not expose a stable direct href during exploration.");
-    return;
-  }
-
-  await option.click();
-  await waitForMarangatu(page);
-  await checkpoint(page, "07-f241-after-menu-click");
-
-  const yearSelect = page.locator("select").filter({ has: page.locator("option", { hasText: String(period.year) }) }).first();
-  if (await yearSelect.isVisible().catch(() => false)) await yearSelect.selectOption({ label: String(period.year) });
-
-  const monthSelect = page.locator("select").filter({ has: page.locator("option", { hasText: monthLabels[period.month - 1] }) }).first();
-  if (await monthSelect.isVisible().catch(() => false)) await monthSelect.selectOption({ label: monthLabels[period.month - 1] });
-
-  await checkpoint(page, "08-f241-period-selected");
-  await safeClick(page, page.getByRole("button", { name: /Confirmar Presentaci|Confirmar|Presentar/ }).first(), "Confirmar F241");
-  await checkpoint(page, "09-f241-submitted");
+  console.log("F241 menu option is visible. Dry-run stops here because the portal did not expose a stable direct href during exploration.");
 }
 
 async function main() {
@@ -297,7 +301,17 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error(error);
-  process.exitCode = 1;
-});
+const isCliRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isCliRun) {
+  main().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+export {
+  datePartsInTimeZone,
+  previousMonthPeriod,
+  targetPeriod
+};
