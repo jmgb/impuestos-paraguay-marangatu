@@ -1,0 +1,16 @@
+{
+  "name": "impuestos-paraguay-marangatu",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "run": "node src/marangatu.js",
+    "dry-run": "node src/marangatu.js --dry-run",
+    "register-task": "powershell -ExecutionPolicy Bypass -File scripts/register-task.ps1",
+    "schedule-check": "powershell -ExecutionPolicy Bypass -File scripts/run-monthly-check.ps1"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "playwright": "^1.54.1"
+  }
+}
