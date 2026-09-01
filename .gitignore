@@ -10,3 +10,8 @@ presentaciones/*
 npm-debug.log*
 playwright-report/
 test-results/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+coverage/

@@ -17,13 +17,25 @@ const okSummary = buildResultSummary({
     { form: "F241", status: "presentado", justificante: "/abs/presentaciones/2026-04/F241.png" }
   ]
 });
-assert.match(okSummary, /\[MARANGATU\]/);
-assert.match(okSummary, /Periodo 04\/2026/);
+assert.match(okSummary, /\[PARAGUAY IMPUESTOS\]/);
+assert.match(okSummary, /Presentación completada correctamente para 04\/2026/);
 assert.match(okSummary, /✅ <b>F120<\/b>: presentado/);
 assert.match(okSummary, /✅ <b>F241<\/b>: presentado/);
 assert.match(okSummary, /Justificante: \/abs\/presentaciones\/2026-04\/F120\.png/);
 assert.match(okSummary, /Justificante: \/abs\/presentaciones\/2026-04\/F241\.png/);
-assert.match(okSummary, /Modo: submit/);
+assert.match(okSummary, /Modo: presentación real/);
+
+const dryRunSummary = buildResultSummary({
+  period: { year: 2026, month: 8 },
+  mode: "dry-run",
+  results: [
+    { form: "F120", status: "preparado hasta Presentar Declaración" },
+    { form: "F241", status: "talones pendientes; preparado hasta Confirmar presentación" }
+  ]
+});
+assert.match(dryRunSummary, /Dry run completado correctamente para 08\/2026/);
+assert.match(dryRunSummary, /No se presentó ningún formulario/);
+assert.match(dryRunSummary, /Modo: simulación segura/);
 
 const errorSummary = buildResultSummary({
   period: { year: 2026, month: 4 },
@@ -35,6 +47,7 @@ const errorSummary = buildResultSummary({
 });
 assert.match(errorSummary, /❌ <b>F241<\/b>: error — Bot/);
 assert.match(errorSummary, /&lt;Aceptar&gt;/);
+assert.match(errorSummary, /Ejecución con errores para 04\/2026/);
 
 const skippedSummary = buildResultSummary({
   period: { year: 2026, month: 5 },

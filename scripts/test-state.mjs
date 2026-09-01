@@ -62,6 +62,17 @@ const skipped = await runFormWithStateTracking({
 assert.equal(calls, 1, "fn must not run when state already presentado");
 assert.deepEqual(skipped, { skipped: true, reason: "presentado" });
 
+const forceStillSkipped = await runFormWithStateTracking({
+  formName: "F120",
+  period: { year: 2026, month: 4 },
+  submit: true,
+  force: true,
+  stateFilePath: stateFile,
+  fn: async () => { calls += 1; }
+});
+assert.equal(calls, 1, "--force no debe duplicar un estado terminal en modo submit");
+assert.deepEqual(forceStillSkipped, { skipped: true, reason: "presentado" });
+
 await setFormStatus({ year: 2026, month: 4 }, "F241", "sin-pendientes", {}, stateFile);
 const skippedNoPending = await runFormWithStateTracking({
   formName: "F241",
@@ -103,7 +114,8 @@ await runFormWithStateTracking({
   formName: "F241",
   period: { year: 2026, month: 5 },
   submit: true,
-  force: true,
+  force: false,
+  retryError: true,
   stateFilePath: stateFile,
   fn: async () => { forcedCalls += 1; return { stateStatus: "sin-pendientes" }; }
 });

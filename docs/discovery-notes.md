@@ -1,10 +1,6 @@
 # Discovery Notes
 
-Fecha de exploracion: 2026-05-09.
-
-## Chrome
-
-El plugin de Chrome finalmente funciono en este proyecto. Se verifico abriendo `https://www.marca.com/` y despues `https://marangatu.set.gov.py/eset/login`.
+Exploración inicial: 2026-05-09. Última actualización funcional: 2026-09-01.
 
 ## Login Marangatu
 
@@ -28,7 +24,7 @@ Formulario 120
 01/2026
 ```
 
-Esto permite detectar si el F120 del periodo ya aparece en "Ultimas Declaraciones".
+Los nombres, identificadores y valores fiscales se sustituyen aquí por marcadores. Los checkpoints reales no deben publicarse.
 
 ## F120
 
@@ -45,7 +41,7 @@ Pantalla observada:
 ```text
 heading "Presentar Declaración"
 RUC prellenado
-DV 3
+DV prellenado
 Obligación
 option "211 - IVA General - MENSUAL"
 Periodo MENSUAL
@@ -63,14 +59,7 @@ Declaraciones Informativas
 Gestion De Comprobantes Informativos
 ```
 
-La opcion aparece visualmente en el menu lateral, pero durante esta exploracion no expuso un `href` directo ni disparo navegacion detectable con clicks automatizados. Para la siguiente sesion, el camino mas rapido es:
-
-1. Abrir Chrome con sesion iniciada.
-2. Ir al home.
-3. Abrir segunda entrada `Declaraciones Informativas`.
-4. Hacer click manual en `Gestion De Comprobantes Informativos`.
-5. Capturar URL final, HTML y/o request de red.
-6. Codificar esa ruta en `openInformativeReceipts`.
+La opción puede no exponer un `href` estable. El script intenta obtener la ruta dinámica del HTML o del modelo Angular y, como último recurso, pulsa la tarjeta visible.
 
 La URL correcta de gestion capturada fue:
 
@@ -97,4 +86,8 @@ Para el periodo probado, tras elegir ano/mes la pantalla mostro:
 No existen talones pendientes de presentación
 ```
 
-Si en otro periodo aparecen talones pendientes, falta validar el selector exacto del boton final antes de permitir `--submit`.
+Si aparecen talones pendientes, el dry-run verifica la presencia del botón final sin pulsarlo. El modo real pulsa `Presentar declaración`, acepta el diálogo y vuelve a consultar el mismo período. Solo se considera correcto cuando el portal muestra que ya no existen talones pendientes.
+
+## Verificación final
+
+F120 solo se considera presentado si `Consultar Declaraciones` devuelve una fila del período y formulario esperados, activa y en un estado terminal aceptado. F241 usa la comprobación independiente de talones pendientes. Estas verificaciones ocurren antes de las notificaciones de éxito.

@@ -27,7 +27,9 @@ if (Test-Path $stateFile) {
 
 Push-Location $root
 try {
-    node src/marangatu.js
+    # La tarea programada solo prepara y valida. La presentacion legal requiere
+    # una ejecucion manual y supervisada con --submit.
+    node src/marangatu.js --dry-run
     if ($LASTEXITCODE -ne 0) {
         throw "La automatizacion fallo con codigo $LASTEXITCODE"
     }
