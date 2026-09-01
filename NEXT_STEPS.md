@@ -1,24 +1,24 @@
-# Mantenimiento pendiente
+# Maintenance checklist
 
-La automatización cubre F120, F241, dry-run seguro, presentación real supervisada, verificación posterior, estado local y notificaciones opcionales.
+The automation covers Forms 120 and 241, safe dry-runs, supervised real submission, post-submit verification, local state, and optional notifications.
 
-## Operación mensual
+## Monthly operation
 
-1. Ejecutar el dry-run programado del mes anterior.
-2. Revisar checkpoints y cualquier cambio visual del portal.
-3. Autorizar por separado una presentación real, si corresponde.
-4. Confirmar F120 en `Consultar Declaraciones` y F241 sin talones pendientes.
-5. Conservar los justificantes y limpiar los artifacts de depuración cuando ya no sean necesarios.
+1. Run the scheduled dry-run for the previous month.
+2. Review checkpoints and any visual portal changes.
+3. Authorize a real submission separately, when applicable.
+4. Confirm Form 120 in `Consultar Declaraciones` and Form 241 with no pending slips.
+5. Retain filing evidence and remove debug artifacts when they are no longer needed.
 
-## Mantenimiento técnico
+## Technical maintenance
 
-- Actualizar Playwright de forma controlada y repetir los tests más un dry-run visible.
-- Revisar selectores después de cualquier cambio de Marangatu.
-- Mantener las variables nuevas sincronizadas con `.env.example` y README.
-- No añadir capturas, HTML, justificantes, credenciales ni URLs de sesión a Git.
-- Mantener la automatización recurrente exclusivamente en modo dry-run.
+- Upgrade Playwright in a dedicated change and repeat the tests plus one visible dry-run.
+- Review selectors after any Marangatu interface change.
+- Keep new variables synchronized across `.env.example`, README, and tests.
+- Never add screenshots, HTML, filing evidence, credentials, or session URLs to Git.
+- Keep recurring automation exclusively in dry-run mode.
 
-## Comandos
+## Commands
 
 ```bash
 npm test

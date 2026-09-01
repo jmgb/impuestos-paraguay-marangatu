@@ -1,111 +1,109 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides contributor guidance for AI coding agents working in this repository.
 
-## Qué es este proyecto
+## Project purpose
 
-Automatización Playwright (Node.js, ESM) que prepara las declaraciones mensuales de un contribuyente paraguayo en el portal Marangatu de la SET (`https://marangatu.set.gov.py/eset/`). Se ejecuta desde Windows con Chrome **visible** (no headless por defecto) y deja capturas + HTML de cada paso en `artifacts/` para depurar selectores sin volver a explorar el portal a mano.
+This is a Node.js ESM and Playwright automation for Paraguayan tax residents who must file monthly zero-activity returns through Marangatu. It prepares Forms 120 and 241, runs with visible Chromium by default, and saves screenshots plus HTML checkpoints in `artifacts/`.
 
-## Flujo mensual configurado
+The project does not determine tax residency, eligibility for zero-activity filing, filing obligations, or deadlines. Do not turn user-specific assumptions into general tax guidance.
 
-Esta instalación prepara dos formularios por el período del mes anterior. El código no determina obligaciones ni vencimientos fiscales; cada usuario debe validarlos por separado. El orden y los pasos exactos del portal son:
+## Filing period and schedule
 
-**Regla de período por defecto** (sin `--year/--month`): año = año actual, mes = mes actual − 1. Excepción: si el mes actual es **enero**, el período es **diciembre del año anterior**. Ejemplo: ejecutado en mayo 2026 → presenta abril 2026; ejecutado en enero 2026 → presenta diciembre 2025. La función `previousMonthPeriod` usa **hora local** (la máquina Windows corre en TZ Madrid) para evitar que una ejecución de madrugada el día 1 caiga al mes equivocado por desfase UTC.
+Without `--year` and `--month`, `previousMonthPeriod` selects the previous calendar month in `Europe/Madrid`. January correctly rolls back to December of the previous year.
 
-**Ventana de ejecución programada**: la tarea de Windows debe lanzar la automatización a las **12:00 hora de Madrid** del **día 1 de cada mes**. La tarea registrada por `scripts/register-task.ps1` se despierta a las **12:00** y **12:30**, y `scripts/run-monthly-check.ps1` filtra: sólo lanza Node cuando en TZ Madrid (`Romance Standard Time`) es **día 1 a las 12:xx** y `.state/last-run.txt` no contiene aún el `yyyy-MM` actual. Resultado: una sola ejecución por mes, lo más cerca posible del 1 a las 12:00 Madrid.
+The Windows task wakes at 12:00 and 12:30. `scripts/run-monthly-check.ps1` runs Node only between 12:00 and 12:59 Madrid time on day 1 and uses `.state/last-run.txt` to prevent a second run in the same month. Scheduled runs are always dry-runs.
 
-### Formulario 120 — IVA General Mensual
+### Form 120 — monthly VAT
 
-1. Menú **Declaraciones Juradas y Pagos**
-2. **Presentar Declaración**
-3. Obligación **`211 - IVA General - MENSUAL`**
-4. Seleccionar **Año** y **Mes**
-5. **Abrir Declaración**
-6. **Presentar Declaración** (botón final, sólo con `--submit`)
+1. Open `Declaraciones Juradas y Pagos`.
+2. Open `Presentar Declaración`.
+3. Select obligation `211 - IVA General - MENSUAL`.
+4. Select year and month.
+5. Open the declaration.
+6. Stop before `Presentar Declaración` in dry-run, or confirm it only in authorized submit mode.
+7. Verify the active terminal row in `Consultar Declaraciones`.
 
-### Formulario 241 — Comprobantes Informativos
+### Form 241 — informative receipts
 
-1. Menú **Declaraciones Informativas**
-2. **Gestión de Comprobantes Informativos**
-3. Seleccionar **Año** y **Mes**
-4. **Confirmar Presentación** (botón final, sólo con `--submit`)
+1. Open `Declaraciones Informativas`.
+2. Open `Gestión de Comprobantes Informativos`.
+3. Open `Confirmar Presentación`.
+4. Select year and month.
+5. Stop before the final action in dry-run, or confirm it only in authorized submit mode.
+6. Reopen the period and require `No existen talones pendientes de presentación`.
 
-Estado del flujo automatizado: F120 llega hasta `Abrir Declaración` en `dry-run` y, con `--submit`, intenta el botón final + confirmación. F241 abre `gestionComprobantesVirtuales.do?_cyp=...`, entra a la tarjeta `Confirmar Presentación`, selecciona `select[name="anho"]` y `select[name="mes"]`, espera a que aparezca `button[data-ng-click^="vm.procesar"]` (texto `Presentar declaración`) y, sólo con `--submit`, lo pulsa y acepta el pop-up final (`button.btn-primary[type="button"]` con texto `Aceptar`). En `dry-run` se detiene en el checkpoint `09-f241-submit-ready` sin pulsar nada.
+## Commands
 
-## Comandos
-
-```powershell
-npm.cmd ci
-npx.cmd playwright install chromium     # solo si falta el navegador
-
-npm.cmd run dry-run                     # corrida visible sin presentar
-npm.cmd test                            # suite determinista completa
-npm.cmd run clean:artifacts             # borra capturas/HTML locales sensibles
-node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f241   # solo F120
-node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f120   # solo F241
-npm run submit -- --confirm-period YYYY-MM                           # presentación real supervisada
-npm run submit -- --confirm-period YYYY-MM --check                   # valida submit sin abrir Marangatu
-npm.cmd run register-task               # registra la tarea programada de Windows
+```bash
+npm ci
+npx playwright install chromium
+npm run dry-run
+npm test
+node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f241
+node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f120
+npm run submit -- --confirm-period YYYY-MM --check
+npm run submit -- --confirm-period YYYY-MM
 ```
 
-Sin `--year/--month` el script usa el **mes anterior** (`previousMonthPeriod`).
+On Windows, `npm.cmd run register-task` registers the monthly dry-run task and `npm.cmd run clean:artifacts` removes volatile debug evidence.
 
-Hay una prueba ligera de cálculo de período en `scripts/test-period.mjs`. La validación funcional sigue siendo ejecutar el dry-run y revisar los PNG/HTML en `artifacts/`.
+## Architecture and safety invariants
 
-## Arquitectura clave
+`src/marangatu.js` is the browser entry point. Selectors and navigation helpers are intentionally kept close to the workflow because Marangatu exposes session-dependent URLs and inconsistent labels.
 
-**Punto de entrada único**: `src/marangatu.js` (ESM, Playwright + dotenv). Todo el flujo vive en ese archivo: parseo de args, login, F120, F241, checkpoints. No hay capa de abstracción de páginas — los selectores están inline.
+Real submission has three independent interlocks:
 
-**Triple seguro contra presentación accidental**: el envío real exige `--submit`, `MARANGATU_SUBMIT=true` y `--confirm-period YYYY-MM` coincidente con el período calculado. `--dry-run` y `--submit` son excluyentes. `scripts/run-supervised-submit.mjs` activa el interlock de entorno solo para ese proceso; el wrapper `.sh` se conserva para compatibilidad y `.env` permanece en `false`. **No quitar estos guardarraíles al refactorizar.**
+1. the CLI must include `--submit`;
+2. `MARANGATU_SUBMIT=true` must exist in the child environment;
+3. `--confirm-period YYYY-MM` must exactly match the previous month in Madrid.
 
-**Estado local por (período, formulario)**: en modo `submit` cada formulario se envuelve con `runFormWithStateTracking`, que persiste en `.state/forms.json` el estado `iniciado` → `presentado` (o `error` con mensaje). Antes de correr, lee el estado previo:
-- `presentado` o `sin-pendientes` → salta el formulario sin permitir bypass en submit.
-- `error` → **lanza excepción**; hay que revisar `artifacts/`, obtener una nueva autorización y usar `--retry-error F120|F241`.
-- En `dry-run` el estado **no se lee ni se escribe**, para no contaminarlo durante pruebas.
+`scripts/run-supervised-submit.mjs` is the cross-platform launcher that enables the environment interlock only for the supervised child process. `scripts/run-supervised-submit.sh` remains as a compatibility wrapper. Never remove or weaken these controls. Never schedule submit mode.
 
-El estado local complementa las verificaciones del portal con un guardarraíl independiente, especialmente útil cuando un envío queda a medias por error de red o crash.
+### Local form state
 
-**Selectores frágiles y sesión-dependientes**:
-- El `href` real de `Presentar Declaracion` cambia por sesión (`recibirDDJJContribuyente.do?_cyp=...`). Hay que leerlo del DOM cada vez (`findCommonOptionHref`).
-- Los textos del portal usan acentos inconsistentes; el código a veces usa regex `Declaraci.n` para tolerar `ó` / `o`. Mantener ese patrón al añadir selectores.
-- Los `<select>` se localizan por **una opción visible conocida** (`selectByVisibleOption`), no por id/name, porque el portal no expone IDs estables.
-- Antes de preparar F120 se consulta `Consultar Declaraciones` para el formulario y período exactos y así evitar duplicados.
+In submit mode, `runFormWithStateTracking` writes `.state/forms.json`:
 
-**Checkpoints**: cada paso relevante llama `checkpoint(page, "NN-nombre")`, que guarda PNG full-page + HTML en `artifacts/`. Mantener la numeración secuencial al añadir pasos — los archivos quedan ordenados alfabéticamente y eso es la herramienta principal de debug.
+- `iniciado` becomes `presentado`, `sin-pendientes`, or `error`;
+- terminal `presentado` and `sin-pendientes` states are skipped without a submit bypass;
+- an `error` state requires artifact review, fresh user authorization, and `--retry-error F120|F241`;
+- dry-runs neither read nor write submit state.
 
-**Artifacts sensibles**: `artifacts/` esta gitignored, pero puede contener datos fiscales. Usar `npm.cmd run clean:artifacts` cuando las capturas/HTML ya no sean necesarios.
+The supervised launcher rejects `--force`. In dry-run only, `--force` may be used for an explicit UI inspection of a Form 120 period that is already filed.
 
-**Justificantes de presentación**: cuando una corrida con `--submit` completa F120 o F241 con éxito, `saveJustificante` guarda la captura final como `presentaciones/YYYY-MM/F120.png` (o `F241.png`). El subdirectorio del período se crea sólo cuando se presenta — es la prueba legal de que la declaración salió. El path se incluye en el mensaje Telegram. La carpeta `presentaciones/` está trackeada (vía `.gitkeep`), pero su contenido está gitignored. Configurable con `MARANGATU_PRESENTACIONES_DIR`. **Distinta semántica que `artifacts/`**: `artifacts/` es debug volátil que se borra; `presentaciones/` es archivo legal que se conserva.
+### Portal navigation
 
-**Verificación posterior**: F120 no devuelve `presentado` hasta aparecer activo y con estado terminal en `Declaraciones Juradas Y Pagos` → `Consultar Declaraciones`, filtrando formulario `120 - IVA GENERAL` y período desde/hasta sin filtrar estado. El gate se repite después de F241 y antes de Telegram/email. Después de confirmar F241, el flujo vuelve a abrir el período y exige `No existen talones pendientes de presentación`. Si una comprobación falla, se registra `error` y no se reintenta automáticamente.
+- Session URLs containing `_cyp` must be discovered at runtime and never logged or persisted in documentation.
+- `findCommonOptionHref` reads the current Form 120 link from the DOM.
+- Form 241 attempts the dynamic HTML URL, the Angular menu model, and finally the visible card.
+- Portal accents are inconsistent; regex patterns such as `Declaraci.n` deliberately tolerate accented and unaccented labels.
+- `safeClick` checks that a control is visible and enabled before clicking.
 
-**Programación mensual (Windows)**: `scripts/register-task.ps1` registra una tarea que ejecuta `run-monthly-check.ps1` a las 12:00 y 12:30. El script PowerShell sólo lanza Node si en **zona horaria Madrid** (`Romance Standard Time`) son las 12:xx del día 1, y guarda `.state/last-run.txt` con clave `yyyy-MM` para no repetir el mismo mes. Node calcula el período con `Europe/Madrid`, no con la zona local implícita. Si se cambia la ventana o la TZ, hay que actualizar esa lógica, no la tarea programada.
+### Verification gates
 
-## Convenciones
+Form 120 is successful only when `Consultar Declaraciones` returns the expected form and period with active flag `S` and an accepted terminal state. The check runs after submission and once more before notifications.
 
-- Si se añaden nuevos formularios, replicar la estructura `prepareFormularioXXX(page, period, submit)` y respetar el patrón "abrir home → leer href dinámico → seleccionar período → checkpoint → click protegido por `submit`".
-- `safeClick` valida que el botón no esté `disabled` antes de cliquear; usarla siempre en lugar de `locator.click()` directo.
-- Variables de entorno se leen vía `env(name, fallback)` / `boolEnv(name, fallback)`. `env` lanza si falta y no hay fallback.
-- Las credenciales viven en `.env` (gitignored). `.env.example` documenta las variables esperadas.
+Form 241 is successful only when reopening the same period shows no pending slips. A click or confirmation dialog alone is never evidence of a completed filing.
 
-## Notificaciones Telegram
+### Evidence
 
-Al final de `main()` se puede enviar **un solo mensaje** a Telegram con el resumen por formulario (período, estado `presentado`/`error`/`ya presentado`, modo `submit`/`dry-run`). `MARANGATU_TELEGRAM_ENABLED=true` es el interruptor maestro. Cuando está activo, se dispara si:
-- el modo es `submit` (notificación normal de presentación), **o**
-- ocurrió cualquier error durante la corrida (visibilidad de fallos en ejecuciones automáticas), **o**
-- `MARANGATU_TELEGRAM_NOTIFY_DRY_RUN=true` (para confirmar también las pruebas).
+`checkpoint(page, name)` writes a full-page PNG and HTML snapshot to `artifacts/`. Keep checkpoint names ordered and do not commit their contents.
 
-Con `MARANGATU_TELEGRAM_NOTIFY_DRY_RUN=false`, los dry-runs sin errores no notifican.
+Real filing evidence is stored in `presentaciones/YYYY-MM/`. Debug artifacts are volatile; filing evidence must be retained locally. Both may contain protected tax data and are ignored by Git.
 
-Configuración (en `.env`):
-- `MARANGATU_TELEGRAM_ENABLED` — interruptor maestro; `false` por defecto.
-- `MARANGATU_TELEGRAM_TOKEN` — token del bot.
-- `MARANGATU_TELEGRAM_CHAT_ID` — chat o canal destinatario.
+## Notification policy
 
-Si falta cualquiera de las dos variables, el envío se salta silenciosamente con un log claro. La implementación (`sendTelegramMessage`) usa `fetch` nativo, parse mode `HTML`, escape conservador (`&` `<` `>`) y reintento básico ante 429/red. Inspirada en `presupuestor/backend/app/services/telegram_service.py` pero simplificada: un único mensaje por corrida, sin chunking ni `ThreadPoolExecutor` (no aplica en un script de un solo paso).
+`MARANGATU_TELEGRAM_ENABLED` and `MARANGATU_EMAIL_ENABLED` are independent master switches and default to `false` in `.env.example`.
 
-## Confirmación por Gmail
+Telegram may report submit runs, failures, and—when `MARANGATU_TELEGRAM_NOTIFY_DRY_RUN=true`—successful dry-runs. It requires a bot token and chat ID. Keep message content free of credentials, tax identifiers, and session URLs.
 
-`MARANGATU_EMAIL_ENABLED=true` es el interruptor maestro. Después de una ejecución real (`submit`) terminada sin errores, y únicamente si al menos un formulario nuevo queda con estado `presentado`, `sendPresentationConfirmation` envía un correo transaccional a la dirección configurada. Nunca se envía en dry-run ni cuando todos los formularios ya estaban presentados. `.state/email-notifications.json` aplica idempotencia por período para evitar duplicados.
+Gmail is eligible only after an error-free real run with at least one newly filed and verified form. Dry-runs and fully skipped periods never send email. `.state/email-notifications.json` provides period-level idempotency. OAuth credentials may be set directly or read from a separate private environment file.
 
-La configuración puede usar variables OAuth directas o `MARANGATU_GMAIL_CREDENTIALS_ENV` para leerlas desde otro `.env` privado; `MARANGATU_GMAIL_REFRESH_TOKEN_ENV` indica qué refresh token usar allí. No copiar secretos, direcciones personales ni rutas privadas a archivos versionados. Remitente y destinatario se definen explícitamente con `MARANGATU_GMAIL_FROM` y `MARANGATU_GMAIL_TO`. Los errores de envío se incorporan al resumen de Telegram cuando este también está habilitado.
+## Change rules
+
+- Default to dry-run for debugging and selector changes.
+- Never bypass CAPTCHA, MFA, account controls, or portal warnings.
+- Stop on unexpected amounts, periods, account identity, or interface changes.
+- Add deterministic tests for pure logic and mocked notification behavior.
+- CI must never receive Marangatu, Telegram, or Gmail secrets and must never access the live portal.
+- Keep `.env.example`, README, tests, and implementation synchronized when adding configuration.

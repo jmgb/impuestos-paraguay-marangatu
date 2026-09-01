@@ -1,10 +1,12 @@
-# Discovery Notes
+# Portal discovery notes
 
-Exploración inicial: 2026-05-09. Última actualización funcional: 2026-09-01.
+Initial exploration: 2026-05-09. Last functional update: 2026-09-01.
 
-## Login Marangatu
+All names, identifiers, and tax values are replaced with placeholders. Real checkpoints must never be committed or published.
 
-DOM observado:
+## Marangatu login
+
+Observed accessible controls:
 
 ```text
 textbox "Usuario"
@@ -12,82 +14,70 @@ textbox "Contraseña"
 button "Acceder"
 ```
 
-Despues del login, el home mostro:
+The authenticated home page includes account information and recent filing periods. These values are sensitive and must not be logged.
 
-```text
-NOMBRE DEL CONTRIBUYENTE
-RUC_DEL_CONTRIBUYENTE
-Formulario 120
-04/2026
-03/2026
-02/2026
-01/2026
-```
+## Form 120
 
-Los nombres, identificadores y valores fiscales se sustituyen aquí por marcadores. Los checkpoints reales no deben publicarse.
-
-## F120
-
-El enlace `Presentar Declaracion` aparece en `Opciones mas comunes`, con `href` interno parecido a:
+The `Presentar Declaracion` shortcut has a session-dependent internal link similar to:
 
 ```text
 recibirDDJJContribuyente.do?_cyp=...
 ```
 
-Ese token cambia por sesion, asi que el script debe leer el `href` del DOM y abrirlo.
+The token changes on every session, so the script reads the current link from the DOM instead of persisting it.
 
-Pantalla observada:
+Observed form controls:
 
 ```text
 heading "Presentar Declaración"
-RUC prellenado
-DV prellenado
-Obligación
+pre-filled tax identifier and verification digit
 option "211 - IVA General - MENSUAL"
-Periodo MENSUAL
-Año 2026, 2025, ...
-Mes Enero, Febrero, Marzo, Abril, ...
+monthly period
+year selector
+month selector
 button "Abrir Declaración"
 ```
 
-## F241
+After real submission, the workflow opens `Consultar Declaraciones`, filters the exact form and period, and requires an active terminal row.
 
-La ruta de menu observada fue:
+## Form 241
+
+Observed menu route:
 
 ```text
 Declaraciones Informativas
 Gestion De Comprobantes Informativos
 ```
 
-La opción puede no exponer un `href` estable. El script intenta obtener la ruta dinámica del HTML o del modelo Angular y, como último recurso, pulsa la tarjeta visible.
+The menu item may not expose a stable `href`. The script attempts to discover the dynamic route from the HTML or Angular menu model and falls back to clicking the visible card.
 
-La URL correcta de gestion capturada fue:
+The dynamic route resembles:
 
 ```text
 gestionComprobantesVirtuales.do?_cyp=...
 ```
 
-La tarjeta `Confirmar Presentación` abre una nueva pestana:
+The `Confirmar Presentación` card opens a page resembling:
 
 ```text
 gdi/presentacionTalonResumen.do?_cyp=...
 ```
 
-La pantalla de talon contiene:
+Observed period controls:
 
 ```html
 <select name="anho">...</select>
 <select name="mes">...</select>
 ```
 
-Para el periodo probado, tras elegir ano/mes la pantalla mostro:
+When no slips are pending, the portal displays:
 
 ```text
 No existen talones pendientes de presentación
 ```
 
-Si aparecen talones pendientes, el dry-run verifica la presencia del botón final sin pulsarlo. El modo real pulsa `Presentar declaración`, acepta el diálogo y vuelve a consultar el mismo período. Solo se considera correcto cuando el portal muestra que ya no existen talones pendientes.
+If slips are pending, dry-run confirms that the final button exists without clicking it. Authorized real submission clicks `Presentar declaración`, accepts the dialog, and reopens the same period. Success requires the portal to report that no pending slips remain.
 
-## Verificación final
+## Final verification
 
-F120 solo se considera presentado si `Consultar Declaraciones` devuelve una fila del período y formulario esperados, activa y en un estado terminal aceptado. F241 usa la comprobación independiente de talones pendientes. Estas verificaciones ocurren antes de las notificaciones de éxito.
+Form 120 requires a matching form and period, active flag, and accepted terminal status in `Consultar Declaraciones`. Form 241 uses the independent pending-slip check. Both gates run before success notifications.

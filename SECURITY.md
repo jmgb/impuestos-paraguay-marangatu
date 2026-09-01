@@ -1,16 +1,16 @@
-# Seguridad
+# Security policy
 
-Este proyecto procesa credenciales y evidencia fiscal sensible. No abras una issue pública que contenga usuario, contraseña, RUC, DV, tokens, cookies, URLs de sesión, capturas, HTML del portal ni justificantes.
+This project handles credentials and sensitive tax evidence. Never open a public issue containing a username, password, tax identifier, verification digit, token, cookie, session URL, portal screenshot, HTML snapshot, or filing receipt.
 
-## Informar de una vulnerabilidad
+## Reporting a vulnerability
 
-Utiliza la opción privada **Report a vulnerability** de la pestaña Security del repositorio. Incluye únicamente los pasos mínimos para reproducirla y redacta cualquier dato fiscal o credencial.
+Use the repository's private **Report a vulnerability** option under the Security tab when available. Include only the minimum reproduction steps and redact all credentials and tax data.
 
-Si una credencial o token llegó a Git, revócalo o rótalo inmediatamente. Borrarlo en un commit posterior no lo elimina del historial.
+If a credential or token reaches Git, revoke or rotate it immediately. Deleting it in a later commit does not remove it from Git history.
 
-## Límites
+## Boundaries
 
-- No intentes superar CAPTCHA, MFA ni controles de acceso.
-- No pruebes el flujo con cuentas ajenas o sin autorización.
-- No ejecutes presentaciones reales para reproducir un problema.
-- Usa mocks para los tests automatizados y dry-run para validar cambios del portal.
+- Do not bypass CAPTCHA, MFA, or access controls.
+- Do not test with an account you do not own or have authorization to use.
+- Do not perform a real tax submission to reproduce a software issue.
+- Use mocks for automated tests and dry-run mode for portal validation.

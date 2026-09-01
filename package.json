@@ -1,7 +1,7 @@
 {
   "name": "impuestos-paraguay-marangatu",
   "version": "0.1.0",
-  "description": "Automatización Playwright con dry-run seguro para los formularios mensuales F120 y F241 de Marangatu.",
+  "description": "Playwright automation for Paraguayan tax residents filing monthly zero-activity Forms 120 and 241 through Marangatu.",
   "private": true,
   "license": "UNLICENSED",
   "repository": {
