@@ -23,6 +23,6 @@
   },
   "dependencies": {
     "dotenv": "^16.6.1",
-    "playwright": "^1.54.1"
+    "playwright": "^1.62.1"
   }
 }
