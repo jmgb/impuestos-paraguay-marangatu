@@ -176,13 +176,13 @@ The external file must contain `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and t
 `systemd/marangatu-monthly.timer` starts `scripts/run-monthly.sh` on day 1 at 12:00 Madrid time. The script **submits** the previous Madrid month: it passes `--submit`, `MARANGATU_SUBMIT=true`, and the computed `--confirm-period` to `src/marangatu.js`, so period validation, `.state/forms.json` duplicate protection, the stop on a previous `error`, and portal verification still apply. `Persistent=true` runs a missed month as soon as the machine is back on. The units assume the checkout lives at `~/ai_projects/codex_projects/impuestos-paraguay`; adjust `ExecStart` otherwise.
 
 ```bash
-ln -sf "$PWD/systemd/marangatu-monthly.service" "$PWD/systemd/marangatu-monthly.timer" ~/.config/systemd/user/
+ln -sf "$PWD"/systemd/marangatu-monthly{,-failure}.service "$PWD/systemd/marangatu-monthly.timer" ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now marangatu-monthly.timer
 scripts/run-monthly.sh --dry-run   # manual test, never submits (also accepts --skip-f120 / --skip-f241)
 ```
 
-The script runs headless unless `MARANGATU_HEADLESS` is already set in the environment, and writes each run to `logs/YYYY-MM-DD_HHMMSS-<mode>.log` (ignored by Git). After a submission, the log is also copied to `presentaciones/YYYY-MM/`.
+The script runs headless unless `MARANGATU_HEADLESS` is already set in the environment, and writes each run to `logs/YYYY-MM-DD_HHMMSS-<mode>.log` (ignored by Git). After a submission, the log is also copied to `presentaciones/YYYY-MM/`. If the service fails before Node can notify (missing Node, systemd timeout), `marangatu-monthly-failure.service` runs `scripts/notify-failure.sh`, which sends a generic Telegram alert unless the run's log already records one.
 
 ### Windows Task Scheduler
 

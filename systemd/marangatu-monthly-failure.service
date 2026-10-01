@@ -1,0 +1,6 @@
+[Unit]
+Description=Marangatu: aviso por Telegram si falla marangatu-monthly.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash %h/ai_projects/codex_projects/impuestos-paraguay/scripts/notify-failure.sh

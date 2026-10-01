@@ -12,7 +12,7 @@ The project does not determine tax residency, eligibility for zero-activity fili
 
 Without `--year` and `--month`, `previousMonthPeriod` selects the previous calendar month in `Europe/Madrid`. January correctly rolls back to December of the previous year.
 
-On this machine the schedule is the systemd user timer `systemd/marangatu-monthly.timer` (day 1, 12:00 Madrid, `Persistent=true`), which runs `scripts/run-monthly.sh` headless in **submit** mode and logs to `logs/`. The owner explicitly authorized unattended monthly submission on 2026-10-01. The legacy Windows task wakes at 12:00 and 12:30. `scripts/run-monthly-check.ps1` runs Node only between 12:00 and 12:59 Madrid time on day 1 and uses `.state/last-run.txt` to prevent a second run in the same month. The Windows task is dry-run only.
+On this machine the schedule is the systemd user timer `systemd/marangatu-monthly.timer` (day 1, 12:00 Madrid, `Persistent=true`), which runs `scripts/run-monthly.sh` headless in **submit** mode and logs to `logs/`; `OnFailure=` triggers `scripts/notify-failure.sh` as a Telegram fallback. The owner explicitly authorized unattended monthly submission on 2026-10-01. The legacy Windows task wakes at 12:00 and 12:30. `scripts/run-monthly-check.ps1` runs Node only between 12:00 and 12:59 Madrid time on day 1 and uses `.state/last-run.txt` to prevent a second run in the same month. The Windows task is dry-run only.
 
 ### Form 120 — monthly VAT
 

@@ -7,7 +7,7 @@ import { chromium } from "playwright";
 
 import { sendPresentationConfirmation } from "./email-notifier.js";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");

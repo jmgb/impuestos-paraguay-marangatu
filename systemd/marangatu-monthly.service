@@ -2,6 +2,7 @@
 Description=Marangatu: presentación mensual de los formularios 120 y 241
 Wants=network-online.target
 After=network-online.target
+OnFailure=marangatu-monthly-failure.service
 
 [Service]
 Type=oneshot
