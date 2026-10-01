@@ -12,7 +12,7 @@ The project does not determine tax residency, eligibility for zero-activity fili
 
 Without `--year` and `--month`, `previousMonthPeriod` selects the previous calendar month in `Europe/Madrid`. January correctly rolls back to December of the previous year.
 
-The Windows task wakes at 12:00 and 12:30. `scripts/run-monthly-check.ps1` runs Node only between 12:00 and 12:59 Madrid time on day 1 and uses `.state/last-run.txt` to prevent a second run in the same month. Scheduled runs are always dry-runs.
+On this machine the schedule is the systemd user timer `systemd/marangatu-monthly.timer` (day 1, 12:00 Madrid, `Persistent=true`), which runs `scripts/run-monthly.sh` headless in **submit** mode and logs to `logs/`. The owner explicitly authorized unattended monthly submission on 2026-10-01. The legacy Windows task wakes at 12:00 and 12:30. `scripts/run-monthly-check.ps1` runs Node only between 12:00 and 12:59 Madrid time on day 1 and uses `.state/last-run.txt` to prevent a second run in the same month. The Windows task is dry-run only.
 
 ### Form 120 — monthly VAT
 
@@ -58,7 +58,7 @@ Real submission has three independent interlocks:
 2. `MARANGATU_SUBMIT=true` must exist in the child environment;
 3. `--confirm-period YYYY-MM` must exactly match the previous month in Madrid.
 
-`scripts/run-supervised-submit.mjs` is the cross-platform launcher that enables the environment interlock only for the supervised child process. `scripts/run-supervised-submit.sh` remains as a compatibility wrapper. Never remove or weaken these controls. Never schedule submit mode.
+`scripts/run-supervised-submit.mjs` is the cross-platform launcher that enables the environment interlock only for the supervised child process. `scripts/run-supervised-submit.sh` remains as a compatibility wrapper. Never remove or weaken these controls. The only scheduled submit path is `scripts/run-monthly.sh`, which sets all three interlocks itself for the computed previous Madrid month; do not add other scheduled submit paths or automatic `--retry-error`.
 
 ### Local form state
 
@@ -89,7 +89,7 @@ Form 241 is successful only when reopening the same period shows no pending slip
 
 `checkpoint(page, name)` writes a full-page PNG and HTML snapshot to `artifacts/`. Keep checkpoint names ordered and do not commit their contents.
 
-Real filing evidence is stored in `presentaciones/YYYY-MM/`. Debug artifacts are volatile; filing evidence must be retained locally. Both may contain protected tax data and are ignored by Git.
+Real filing evidence is stored in `presentaciones/YYYY-MM/` by `saveJustificante`: `F120-resultado`, `F120-declaracion`, `F241-resultado`, and `F241-talon` as PNG, redacted HTML, and PDF (headless only), plus the run log for scheduled submissions. Debug artifacts are volatile; filing evidence must be retained locally. Both may contain protected tax data and are ignored by Git.
 
 ## Notification policy
 

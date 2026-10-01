@@ -370,12 +370,19 @@ async function checkpoint(page, name) {
   if (html) console.log(`HTML: ${html}`);
 }
 
-async function saveJustificante(page, period, formName) {
+// Guarda el documento presentado en presentaciones/YYYY-MM/ como PNG, HTML
+// (sin URLs de sesión) y PDF. Chromium solo genera PDF en modo headless.
+async function saveJustificante(page, period, name) {
   const periodDir = path.join(presentacionesDir, periodStateKey(period));
   await fs.mkdir(periodDir, { recursive: true });
-  const filePath = path.join(periodDir, `${formName}.png`);
+  const filePath = path.join(periodDir, `${name}.png`);
   await page.screenshot({ path: filePath, fullPage: true });
-  console.log(`Justificante guardado: ${filePath}`);
+  const html = (await page.content()).replace(/_cyp=[^"'&\s<>]+/g, "_cyp=REDACTED");
+  await fs.writeFile(path.join(periodDir, `${name}.html`), html, "utf8");
+  await page.pdf({ path: path.join(periodDir, `${name}.pdf`), printBackground: true }).catch(error => {
+    console.log(`PDF de ${name} no generado: ${error.message.split("\n")[0]}`);
+  });
+  console.log(`Justificante guardado: ${path.join(periodDir, name)}.{png,html,pdf}`);
   return filePath;
 }
 
@@ -586,6 +593,27 @@ async function verifyFormulario120Presented(page, period, checkpointName) {
   return false;
 }
 
+// Abre desde Consultar Declaraciones la "Declaración Jurada Original" del
+// periodo (pestaña nueva) y la guarda en presentaciones/YYYY-MM/.
+async function saveFormulario120Declaracion(page, period) {
+  if (!await consultFormulario120Presented(page, period)) {
+    throw new Error(`F120 ${periodKey(period)} no aparece en Consultar Declaraciones.`);
+  }
+  const row = page.locator("table tbody tr").filter({ hasText: periodKey(period) }).first();
+  const [detail] = await Promise.all([
+    page.context().waitForEvent("page", { timeout: 20000 }),
+    row.getByText("Consultar", { exact: true }).click()
+  ]);
+  try {
+    await detail.locator("h4").filter({ hasText: /DECLARACI.N JURADA\s+ORIGINAL/ }).first()
+      .waitFor({ state: "attached", timeout: 30000 });
+    await waitForMarangatu(detail);
+    return await saveJustificante(detail, period, "F120-declaracion");
+  } finally {
+    await detail.close().catch(() => {});
+  }
+}
+
 async function waitForFormulario120Submission(page) {
   const sending = page.getByText("Enviando declaración", { exact: true }).first();
   const appeared = await sending
@@ -638,12 +666,23 @@ async function prepareFormulario120(page, period, submit, force = false) {
   }
   await waitForFormulario120Submission(page);
   await checkpoint(page, "05-f120-submit-response");
+  const resultAccept = page
+    .locator(".modal-dialog:visible")
+    .getByRole("button", { name: /^\s*Aceptar\s*$/i })
+    .first();
+  if (await resultAccept.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false)) {
+    await resultAccept.click();
+    await page.waitForTimeout(800);
+  }
+  await saveJustificante(page, period, "F120-resultado").catch(error => {
+    console.log(`No se pudo guardar el resultado F120: ${error.message}`);
+  });
   if (!await verifyFormulario120Presented(page, period, "05-f120-consult-after-submit")) {
     throw new Error(`F120: no aparece como declaración presentada y activa en Consultar Declaraciones para ${periodKey(period)}.`);
   }
   await checkpoint(page, "05-f120-submitted-verified");
-  const justificante = await saveJustificante(page, period, "F120").catch(error => {
-    console.log(`No se pudo guardar justificante F120: ${error.message}`);
+  const justificante = await saveFormulario120Declaracion(page, period).catch(error => {
+    console.log(`No se pudo guardar la declaración F120: ${error.message}`);
     return undefined;
   });
   return { status: "presentado", justificante };
@@ -688,6 +727,11 @@ async function prepareFormulario241(page, period, submit) {
   await popupAccept.waitFor({ state: "visible", timeout: 20000 });
   await safeClick(talonPage, popupAccept, "Aceptar popup F241");
   await checkpoint(talonPage, "11-f241-popup-accepted");
+  await saveJustificante(talonPage, period, "F241-resultado").catch(error => {
+    console.log(`No se pudo guardar el resultado F241: ${error.message}`);
+  });
+  // El portal reutiliza la ventana del talón si sigue abierta y no emite popup.
+  if (talonPage !== gestionPage) await talonPage.close().catch(() => {});
 
   const verificationGestionPage = await openFormulario241Gestion(gestionPage);
   const verificationPage = await openFormulario241Talon(verificationGestionPage);
@@ -701,11 +745,46 @@ async function prepareFormulario241(page, period, submit) {
     throw new Error(`F241: el portal aún muestra talones pendientes para ${periodKey(period)} tras confirmar.`);
   }
 
-  const justificante = await saveJustificante(verificationPage, period, "F241").catch(error => {
-    console.log(`No se pudo guardar justificante F241: ${error.message}`);
+  const justificante = await saveFormulario241Talon(verificationPage, period).catch(error => {
+    console.log(`No se pudo guardar el talón F241: ${error.message}`);
     return undefined;
   });
   return { status: "presentado", justificante };
+}
+
+// Abre desde el talón la "Consulta de Declaraciones Informativas", busca el
+// 241 del periodo y guarda su detalle en presentaciones/YYYY-MM/.
+async function saveFormulario241Talon(talonPage, period) {
+  const context = talonPage.context();
+  const [consulta] = await Promise.all([
+    context.waitForEvent("page", { timeout: 20000 }),
+    talonPage.getByText("Consulta de Declaraciones Informativas", { exact: true }).click()
+  ]);
+  try {
+    const formSelect = consulta.locator('select[name="estado"]');
+    await formSelect.waitFor({ state: "visible", timeout: 30000 });
+    await formSelect.selectOption({ label: "241 - TALON PRESENTACION" });
+    await consulta.locator('input[name="periodoDesde"]').fill(periodKey(period));
+    await consulta.locator('input[name="periodoHasta"]').fill(periodKey(period));
+    await consulta.getByText("Búsqueda", { exact: true }).click();
+    const row = consulta.locator("table tbody tr")
+      .filter({ hasText: periodStateKey(period).replace("-", "") })
+      .first();
+    await row.waitFor({ state: "visible", timeout: 30000 });
+    const [detail] = await Promise.all([
+      context.waitForEvent("page", { timeout: 20000 }),
+      row.getByText("Consultar", { exact: true }).click()
+    ]);
+    try {
+      await detail.waitForLoadState("domcontentloaded");
+      await waitForMarangatu(detail);
+      return await saveJustificante(detail, period, "F241-talon");
+    } finally {
+      await detail.close().catch(() => {});
+    }
+  } finally {
+    await consulta.close().catch(() => {});
+  }
 }
 
 async function selectFormulario241Period(page, period) {

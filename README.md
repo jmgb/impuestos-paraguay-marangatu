@@ -29,7 +29,7 @@ The default behavior is always `dry-run`. A real submission requires all three c
 2. confirm the exact period with `--confirm-period YYYY-MM`;
 3. enable `MARANGATU_SUBMIT=true`, which the supervised launcher does only for that child process.
 
-`--dry-run` and `--submit` are mutually exclusive. The monthly scheduled task never enables real submission, and the supervised launcher does not accept `--force`.
+`--dry-run` and `--submit` are mutually exclusive. The Linux/WSL systemd timer submits unattended (see Monthly scheduling); the Windows task is dry-run only, and the supervised launcher does not accept `--force`.
 
 The automation does not bypass CAPTCHA, MFA, or any other portal control. Stop the workflow if one appears and complete it manually only when authorized.
 
@@ -39,7 +39,7 @@ The automation does not bypass CAPTCHA, MFA, or any other portal control. Stop t
 - npm.
 - Chromium installed through Playwright.
 - Your own authorized Marangatu account.
-- Windows to use the included Task Scheduler setup. Manual runs also work on WSL, Linux, and macOS.
+- Linux/WSL with systemd for the included user timer, or Windows for the Task Scheduler setup. Manual runs also work on macOS.
 
 The current workflow has been validated locally with Node.js 22.
 
@@ -171,7 +171,20 @@ The external file must contain `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and t
 
 ## Monthly scheduling
 
-The included scheduler setup targets Windows Task Scheduler:
+### Linux / WSL (systemd user timer, unattended submission)
+
+`systemd/marangatu-monthly.timer` starts `scripts/run-monthly.sh` on day 1 at 12:00 Madrid time. The script **submits** the previous Madrid month: it passes `--submit`, `MARANGATU_SUBMIT=true`, and the computed `--confirm-period` to `src/marangatu.js`, so period validation, `.state/forms.json` duplicate protection, the stop on a previous `error`, and portal verification still apply. `Persistent=true` runs a missed month as soon as the machine is back on. The units assume the checkout lives at `~/ai_projects/codex_projects/impuestos-paraguay`; adjust `ExecStart` otherwise.
+
+```bash
+ln -sf "$PWD/systemd/marangatu-monthly.service" "$PWD/systemd/marangatu-monthly.timer" ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now marangatu-monthly.timer
+scripts/run-monthly.sh --dry-run   # manual test, never submits (also accepts --skip-f120 / --skip-f241)
+```
+
+The script runs headless unless `MARANGATU_HEADLESS` is already set in the environment, and writes each run to `logs/YYYY-MM-DD_HHMMSS-<mode>.log` (ignored by Git). After a submission, the log is also copied to `presentaciones/YYYY-MM/`.
+
+### Windows Task Scheduler
 
 ```powershell
 npm.cmd run register-task
@@ -179,12 +192,13 @@ npm.cmd run register-task
 
 The task wakes at 12:00 and 12:30, while `scripts/run-monthly-check.ps1` runs Node only when Madrid time is between 12:00 and 12:59 on day 1. `.state/last-run.txt` prevents duplicate monthly runs.
 
-Scheduled executions always use `--dry-run`. Real submission is never scheduled or retried automatically.
+The Windows task always uses `--dry-run`. Forms in `error` state are never retried automatically.
 
 ## Evidence and privacy
 
 - `artifacts/` contains potentially sensitive screenshots and debug HTML.
-- `presentaciones/YYYY-MM/` contains local evidence of real filings.
+- `presentaciones/YYYY-MM/` contains the filed documents, grouped by filed period: `F120-resultado` (submission result with control code), `F120-declaracion` (the filed "Declaración Jurada Original"), `F241-resultado` (submission result), and `F241-talon` (the filed "Talón de Presentación" from Consulta de Declaraciones Informativas), each as PNG, HTML with session URLs redacted, and PDF when Chromium runs headless.
+- `logs/` contains the output of scheduled runs.
 - `.state/forms.json` stores local state to prevent duplicate submissions.
 - `.env`, `.state/`, `artifacts/`, and filing evidence are ignored by Git.
 

@@ -1,0 +1,9 @@
+[Unit]
+Description=Marangatu: presentación mensual de los formularios 120 y 241
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash %h/ai_projects/codex_projects/impuestos-paraguay/scripts/run-monthly.sh
+TimeoutStartSec=30min
