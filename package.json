@@ -22,7 +22,7 @@
     "schedule-check": "powershell -ExecutionPolicy Bypass -File scripts/run-monthly-check.ps1"
   },
   "dependencies": {
-    "dotenv": "^18.0.1",
+    "dotenv": "^18.0.4",
     "playwright": "^1.62.1"
   }
 }
