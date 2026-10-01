@@ -182,7 +182,7 @@ systemctl --user enable --now marangatu-monthly.timer
 scripts/run-monthly.sh --dry-run   # manual test, never submits (also accepts --skip-f120 / --skip-f241)
 ```
 
-The script runs headless unless `MARANGATU_HEADLESS` is already set in the environment, and writes each run to `logs/YYYY-MM-DD_HHMMSS-<mode>.log` (ignored by Git). After a submission, the log is also copied to `presentaciones/YYYY-MM/`. If the service fails before Node can notify (missing Node, systemd timeout), `marangatu-monthly-failure.service` runs `scripts/notify-failure.sh`, which sends a generic Telegram alert unless the run's log already records one.
+The script runs headless unless `MARANGATU_HEADLESS` is already set in the environment, and writes each run to `logs/YYYY-MM-DD_HHMMSS-<mode>.log` (ignored by Git). After a submission, the log is also copied to `presentaciones/YYYY-MM/`. On WSL, timers only run while the distribution is up. This machine uses a Windows logon task (`WSL Ubuntu keepalive`) that runs `conhost.exe --headless wsl.exe -d Ubuntu --exec /bin/sleep infinity`; together with `loginctl enable-linger` and `Persistent=true`, a month missed while the PC was off is filed right after the next logon. The period is computed at run time, so a machine that stays off for the whole following month would file the newer period instead. If the service fails before Node can notify (missing Node, systemd timeout), `marangatu-monthly-failure.service` runs `scripts/notify-failure.sh`, which sends a generic Telegram alert unless the run's log already records one.
 
 ### Windows Task Scheduler
 
