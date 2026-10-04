@@ -1,42 +1,12 @@
 import fs from "node:fs/promises";
-import path from "node:path";
+
+import dotenv from "dotenv";
+
+import { displayPeriod, escapeHtml, periodStateKey } from "./core.js";
+import { readJsonObject, writeJsonAtomic } from "./state.js";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
-
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function periodKey(period) {
-  return `${period.year}-${String(period.month).padStart(2, "0")}`;
-}
-
-function displayPeriod(period) {
-  return `${String(period.month).padStart(2, "0")}/${period.year}`;
-}
-
-function parseEnvText(text) {
-  const values = {};
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const separator = line.indexOf("=");
-    if (separator < 1) continue;
-    const key = line.slice(0, separator).trim();
-    let value = line.slice(separator + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    values[key] = value;
-  }
-  return values;
-}
 
 async function resolveGmailConfig(env = process.env) {
   let credentials = {
@@ -47,7 +17,7 @@ async function resolveGmailConfig(env = process.env) {
 
   const credentialsFile = env.MARANGATU_GMAIL_CREDENTIALS_ENV;
   if (credentialsFile) {
-    const values = parseEnvText(await fs.readFile(credentialsFile, "utf8"));
+    const values = dotenv.parse(await fs.readFile(credentialsFile, "utf8"));
     const refreshTokenKey = env.MARANGATU_GMAIL_REFRESH_TOKEN_ENV || "GOOGLE_REFRESH_TOKEN";
     credentials = {
       clientId: values.GOOGLE_CLIENT_ID,
@@ -151,42 +121,10 @@ function buildRawMessage({ from, to, subject, html, messageId }) {
   return Buffer.from(lines.join("\r\n"), "utf8").toString("base64url");
 }
 
-async function loadState(stateFile) {
-  try {
-    return JSON.parse(await fs.readFile(stateFile, "utf8"));
-  } catch (error) {
-    if (error.code === "ENOENT") return {};
-    throw error;
-  }
-}
-
-async function saveState(stateFile, state) {
-  await fs.mkdir(path.dirname(stateFile), { recursive: true });
-  const temporary = `${stateFile}.${process.pid}.tmp`;
-  await fs.writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  await fs.rename(temporary, stateFile);
-}
-
-async function verifyGmailConnection({ env = process.env, ...dependencies } = {}) {
+// Renueva el token OAuth y envía un único mensaje HTML; devuelve el id de Gmail.
+async function sendEmail({ env, subject, html, messageId }, dependencies) {
   const config = await resolveGmailConfig(env);
   const accessToken = await getAccessToken(config, dependencies);
-  const response = await requestWithRetry(`${GMAIL_API}/profile`, {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  }, dependencies);
-  const profile = await response.json();
-  return { emailAddress: profile.emailAddress || config.from };
-}
-
-async function sendTestEmail({ env = process.env } = {}, dependencies = {}) {
-  const config = await resolveGmailConfig(env);
-  const accessToken = await getAccessToken(config, dependencies);
-  const subject = "[PARAGUAY IMPUESTOS] Prueba de confirmación por email";
-  const html = [
-    "<p>Este es un correo de prueba del sistema Paraguay Impuestos.</p>",
-    "<p>La integración con Gmail está funcionando correctamente.</p>",
-    "<p><strong>No se ha presentado ningún formulario fiscal.</strong></p>"
-  ].join("");
-  const messageId = `test-${Date.now()}@paraguay-impuestos.local`;
   const raw = buildRawMessage({ ...config, subject, html, messageId });
   const response = await requestWithRetry(`${GMAIL_API}/messages/send`, {
     method: "POST",
@@ -197,7 +135,21 @@ async function sendTestEmail({ env = process.env } = {}, dependencies = {}) {
     body: JSON.stringify({ raw })
   }, dependencies);
   const payload = await response.json();
-  return { sent: true, messageId: payload.id || "" };
+  return payload.id || "";
+}
+
+async function sendTestEmail({ env = process.env } = {}, dependencies = {}) {
+  const messageId = await sendEmail({
+    env,
+    subject: "[PARAGUAY IMPUESTOS] Prueba de confirmación por email",
+    html: [
+      "<p>Este es un correo de prueba del sistema Paraguay Impuestos.</p>",
+      "<p>La integración con Gmail está funcionando correctamente.</p>",
+      "<p><strong>No se ha presentado ningún formulario fiscal.</strong></p>"
+    ].join(""),
+    messageId: `test-${Date.now()}@paraguay-impuestos.local`
+  }, dependencies);
+  return { sent: true, messageId };
 }
 
 async function sendPresentationConfirmation({
@@ -206,41 +158,29 @@ async function sendPresentationConfirmation({
   stateFile,
   env = process.env
 }, dependencies = {}) {
-  const eventKey = `presentation-${periodKey(period)}`;
-  const state = await loadState(stateFile);
+  const eventKey = `presentation-${periodStateKey(period)}`;
+  const state = await readJsonObject(stateFile);
   if (state[eventKey]?.status === "sent") {
     return { sent: false, skipped: true, reason: "already-sent" };
   }
 
-  const config = await resolveGmailConfig(env);
-  const accessToken = await getAccessToken(config, dependencies);
-  const { subject, html } = buildPresentationEmail({ period, results });
-  const messageId = `${eventKey}@paraguay-impuestos.local`;
-  const raw = buildRawMessage({ ...config, subject, html, messageId });
-  const response = await requestWithRetry(`${GMAIL_API}/messages/send`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ raw })
+  const messageId = await sendEmail({
+    env,
+    ...buildPresentationEmail({ period, results }),
+    messageId: `${eventKey}@paraguay-impuestos.local`
   }, dependencies);
-  const payload = await response.json();
   state[eventKey] = {
     status: "sent",
     sent_at: new Date().toISOString(),
-    gmail_message_id: payload.id || ""
+    gmail_message_id: messageId
   };
-  await saveState(stateFile, state);
-  return { sent: true, skipped: false, messageId: payload.id || "" };
+  await writeJsonAtomic(stateFile, state);
+  return { sent: true, skipped: false, messageId };
 }
 
 export {
   buildPresentationEmail,
-  escapeHtml,
-  parseEnvText,
   resolveGmailConfig,
   sendPresentationConfirmation,
-  sendTestEmail,
-  verifyGmailConnection
+  sendTestEmail
 };

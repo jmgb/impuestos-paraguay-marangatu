@@ -3,14 +3,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { periodStateKey } from "../src/core.js";
 import {
-  periodStateKey,
   loadFormState,
   saveFormState,
   getFormStatus,
   setFormStatus,
   runFormWithStateTracking
-} from "../src/marangatu.js";
+} from "../src/state.js";
 
 const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "marangatu-state-"));
 const stateFile = path.join(tmpRoot, "forms.json");
@@ -36,6 +36,13 @@ assert.equal(wholeState["2026-04"].F120.status, "presentado");
 assert.equal(wholeState["2026-04"].F241.status, "error");
 assert.equal(wholeState["2026-04"].F241.error, "boom");
 
+assert.ok((await fs.readFile(stateFile, "utf8")).endsWith("}\n"));
+assert.deepEqual(
+  (await fs.readdir(tmpRoot)).filter(name => name.endsWith(".tmp")),
+  [],
+  "la escritura atómica no debe dejar temporales"
+);
+
 await saveFormState({}, stateFile);
 
 let calls = 0;
@@ -43,7 +50,6 @@ const okResult = await runFormWithStateTracking({
   formName: "F120",
   period: { year: 2026, month: 4 },
   submit: true,
-  force: false,
   stateFilePath: stateFile,
   fn: async () => { calls += 1; return "ok"; }
 });
@@ -55,30 +61,17 @@ const skipped = await runFormWithStateTracking({
   formName: "F120",
   period: { year: 2026, month: 4 },
   submit: true,
-  force: false,
   stateFilePath: stateFile,
   fn: async () => { calls += 1; }
 });
 assert.equal(calls, 1, "fn must not run when state already presentado");
 assert.deepEqual(skipped, { skipped: true, reason: "presentado" });
 
-const forceStillSkipped = await runFormWithStateTracking({
-  formName: "F120",
-  period: { year: 2026, month: 4 },
-  submit: true,
-  force: true,
-  stateFilePath: stateFile,
-  fn: async () => { calls += 1; }
-});
-assert.equal(calls, 1, "--force no debe duplicar un estado terminal en modo submit");
-assert.deepEqual(forceStillSkipped, { skipped: true, reason: "presentado" });
-
 await setFormStatus({ year: 2026, month: 4 }, "F241", "sin-pendientes", {}, stateFile);
 const skippedNoPending = await runFormWithStateTracking({
   formName: "F241",
   period: { year: 2026, month: 4 },
   submit: true,
-  force: false,
   stateFilePath: stateFile,
   fn: async () => { calls += 1; }
 });
@@ -90,11 +83,15 @@ await runFormWithStateTracking({
   formName: "F120",
   period: { year: 2026, month: 4 },
   submit: false,
-  force: false,
   stateFilePath: stateFile,
   fn: async () => { dryRunCalls += 1; }
 });
 assert.equal(dryRunCalls, 1, "dry-run runs even if state says presentado");
+assert.equal(
+  (await getFormStatus({ year: 2026, month: 4 }, "F120", stateFile)).status,
+  "presentado",
+  "dry-run must not write state"
+);
 
 await setFormStatus({ year: 2026, month: 5 }, "F241", "error", { error: "previous" }, stateFile);
 await assert.rejects(
@@ -114,7 +111,6 @@ await runFormWithStateTracking({
   formName: "F241",
   period: { year: 2026, month: 5 },
   submit: true,
-  force: false,
   retryError: true,
   stateFilePath: stateFile,
   fn: async () => { forcedCalls += 1; return { stateStatus: "sin-pendientes" }; }

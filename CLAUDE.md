@@ -44,13 +44,21 @@ node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f241
 node src/marangatu.js --year 2026 --month 5 --dry-run --skip-f120
 npm run submit -- --confirm-period YYYY-MM --check
 npm run submit -- --confirm-period YYYY-MM
+npm run notify:test
+npm run clean:artifacts
 ```
 
-On Windows, `npm.cmd run register-task` registers the monthly dry-run task and `npm.cmd run clean:artifacts` removes volatile debug evidence.
+`notify:test` sends a test message through each enabled channel without opening Marangatu. `clean:artifacts` removes volatile debug evidence, never `presentaciones/`. On Windows, `npm.cmd run register-task` registers the legacy monthly dry-run task; it is disabled on this machine and must never run alongside the systemd timer (both would sign in at 12:00).
 
 ## Architecture and safety invariants
 
-`src/marangatu.js` is the browser entry point. Selectors and navigation helpers are intentionally kept close to the workflow because Marangatu exposes session-dependent URLs and inconsistent labels.
+`src/marangatu.js` is the browser entry point. Selectors and navigation helpers are intentionally kept close to the workflow because Marangatu exposes session-dependent URLs and inconsistent labels. Everything else lives in modules without import side effects (importing them never loads Playwright or reads `.env`):
+
+- `src/core.js`: argument parsing, period math, run-mode interlocks, notification policy, verification rules, HTML escaping and `_cyp` redaction;
+- `src/state.js`: `.state/` paths, atomic JSON writes and `runFormWithStateTracking`;
+- `src/telegram.js` and `src/email-notifier.js`: notification channels.
+
+`.env` is always read from the project root, whatever the working directory.
 
 Real submission has three independent interlocks:
 
@@ -69,7 +77,7 @@ In submit mode, `runFormWithStateTracking` writes `.state/forms.json`:
 - an `error` state requires artifact review, fresh user authorization, and `--retry-error F120|F241`;
 - dry-runs neither read nor write submit state.
 
-The supervised launcher rejects `--force`. In dry-run only, `--force` may be used for an explicit UI inspection of a Form 120 period that is already filed.
+`--force` is rejected in submit mode by both the CLI and the supervised launcher. In dry-run only, `--force` may be used for an explicit UI inspection of a Form 120 period that is already filed.
 
 ### Portal navigation
 
@@ -87,7 +95,7 @@ Form 241 is successful only when reopening the same period shows no pending slip
 
 ### Evidence
 
-`checkpoint(page, name)` writes a full-page PNG and HTML snapshot to `artifacts/`. Keep checkpoint names ordered and do not commit their contents.
+`checkpoint(page, name)` writes a full-page PNG and an HTML snapshot with `_cyp` redacted to `artifacts/`. On any run error, every open tab is captured as `97-error-N`. Keep checkpoint names ordered and do not commit their contents.
 
 Real filing evidence is stored in `presentaciones/YYYY-MM/` by `saveJustificante`: `F120-resultado`, `F120-declaracion`, `F241-resultado`, and `F241-talon` as PNG, redacted HTML, and PDF (headless only), plus the run log for scheduled submissions. Debug artifacts are volatile; filing evidence must be retained locally. Both may contain protected tax data and are ignored by Git.
 
@@ -104,6 +112,6 @@ Gmail is eligible only after an error-free real run with at least one newly file
 - Default to dry-run for debugging and selector changes.
 - Never bypass CAPTCHA, MFA, account controls, or portal warnings.
 - Stop on unexpected amounts, periods, account identity, or interface changes.
-- Add deterministic tests for pure logic and mocked notification behavior.
+- Add deterministic tests for pure logic and mocked notification behavior in `test/*.test.mjs`; `npm test` runs them all with `node --test`.
 - CI must never receive Marangatu, Telegram, or Gmail secrets and must never access the live portal.
 - Keep `.env.example`, README, tests, and implementation synchronized when adding configuration.

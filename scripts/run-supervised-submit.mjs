@@ -7,6 +7,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import dotenv from "dotenv";
 
+import { booleanValue, forms, periodStateKey, previousMonthPeriod } from "../src/core.js";
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultProjectRoot = path.resolve(scriptDir, "..");
 
@@ -38,7 +40,7 @@ function parseLauncherArgs(argv) {
         throw new LauncherError("Falta el valor de --retry-error.", 2);
       }
       const form = argv[++index].toUpperCase();
-      if (!["F120", "F241"].includes(form)) {
+      if (!forms.includes(form)) {
         throw new LauncherError("--retry-error solo acepta F120 o F241.", 2);
       }
       args.forwardArgs.push("--retry-error", form);
@@ -50,24 +52,6 @@ function parseLauncherArgs(argv) {
   }
 
   return args;
-}
-
-function previousMonthStateKey(now = new Date(), timeZone = "Europe/Madrid") {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "numeric"
-  }).formatToParts(now);
-  const value = type => Number(parts.find(part => part.type === type)?.value);
-  const currentMonth = value("month");
-  const period = currentMonth === 1
-    ? { year: value("year") - 1, month: 12 }
-    : { year: value("year"), month: currentMonth - 1 };
-  return `${period.year}-${String(period.month).padStart(2, "0")}`;
-}
-
-function booleanValue(value) {
-  return ["1", "true", "yes", "si"].includes(String(value || "").toLowerCase());
 }
 
 function validateLauncherConfig({ config, confirmPeriod, expectedPeriod }) {
@@ -89,20 +73,26 @@ function resolveProjectRoot(environment = process.env) {
   return path.resolve(environment.MARANGATU_PROJECT_ROOT || defaultProjectRoot);
 }
 
-function loadPrivateConfig(projectRoot) {
+// Configuración efectiva del proceso hijo: como en dotenv, una variable ya
+// presente en el entorno prevalece sobre el valor del .env.
+function effectiveConfig(fileConfig, environment) {
+  return { ...fileConfig, ...environment };
+}
+
+function loadPrivateConfig(projectRoot, environment = process.env) {
   const entrypoint = path.join(projectRoot, "src", "marangatu.js");
   const envFile = path.join(projectRoot, ".env");
   if (!fs.existsSync(entrypoint) || !fs.existsSync(envFile)) {
     throw new LauncherError("Proyecto Marangatu o archivo .env no encontrado en la ruta configurada.", 3);
   }
-  return dotenv.parse(fs.readFileSync(envFile, "utf8"));
+  return effectiveConfig(dotenv.parse(fs.readFileSync(envFile, "utf8")), environment);
 }
 
 function runLauncher(argv = process.argv.slice(2), environment = process.env) {
   const args = parseLauncherArgs(argv);
   const projectRoot = resolveProjectRoot(environment);
-  const config = loadPrivateConfig(projectRoot);
-  const expectedPeriod = previousMonthStateKey();
+  const config = loadPrivateConfig(projectRoot, environment);
+  const expectedPeriod = periodStateKey(previousMonthPeriod());
   validateLauncherConfig({
     config,
     confirmPeriod: args.confirmPeriod,
@@ -144,8 +134,8 @@ if (isCliRun) {
 
 export {
   LauncherError,
+  effectiveConfig,
   parseLauncherArgs,
-  previousMonthStateKey,
   validateLauncherConfig,
   resolveProjectRoot
 };

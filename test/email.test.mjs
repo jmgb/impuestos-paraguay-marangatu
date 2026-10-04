@@ -5,12 +5,10 @@ import path from "node:path";
 
 import {
   buildPresentationEmail,
-  escapeHtml,
+  resolveGmailConfig,
   sendPresentationConfirmation,
   sendTestEmail
 } from "../src/email-notifier.js";
-
-assert.equal(escapeHtml('a < b & "c"'), "a &lt; b &amp; &quot;c&quot;");
 
 const period = { year: 2026, month: 8 };
 const results = [
@@ -65,6 +63,33 @@ const encodedSubject = decodedTestMessage.match(/Subject: =\?UTF-8\?B\?([^?]+)\?
 assert.ok(encodedSubject, "el asunto de prueba debe estar codificado como MIME UTF-8");
 assert.match(Buffer.from(encodedSubject, "base64").toString("utf8"), /Prueba de confirmación/);
 assert.doesNotMatch(decodedTestMessage, /Presentación completada 08\/2026/);
+
+const credentialsFile = path.join(temporaryDir, "google.env");
+await fs.writeFile(credentialsFile, [
+  "# credenciales compartidas",
+  "GOOGLE_CLIENT_ID=file-client",
+  'GOOGLE_CLIENT_SECRET="file-secret"',
+  "CUSTOM_REFRESH=file-refresh"
+].join("\n"));
+assert.deepEqual(
+  await resolveGmailConfig({
+    MARANGATU_GMAIL_CREDENTIALS_ENV: credentialsFile,
+    MARANGATU_GMAIL_REFRESH_TOKEN_ENV: "CUSTOM_REFRESH",
+    MARANGATU_GMAIL_FROM: "sender@example.com",
+    MARANGATU_GMAIL_TO: "recipient@example.com"
+  }),
+  {
+    clientId: "file-client",
+    clientSecret: "file-secret",
+    refreshToken: "file-refresh",
+    from: "sender@example.com",
+    to: "recipient@example.com"
+  }
+);
+await assert.rejects(
+  () => resolveGmailConfig({ MARANGATU_GMAIL_FROM: "sender@example.com" }),
+  /Configuración Gmail incompleta: clientId, clientSecret, refreshToken, to/
+);
 
 await fs.rm(temporaryDir, { recursive: true, force: true });
 console.log("Email tests passed.");

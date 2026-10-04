@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { matchesPresentedDeclaration } from "../src/marangatu.js";
+import { matchesPresentedDeclaration } from "../src/core.js";
 
 const period = { year: 2026, month: 8 };
 const valid = {

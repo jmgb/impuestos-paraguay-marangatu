@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { notificationPolicy } from "../src/marangatu.js";
+import { notificationPolicy } from "../src/core.js";
 
 assert.deepEqual(
   notificationPolicy({

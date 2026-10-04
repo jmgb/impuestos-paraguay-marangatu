@@ -18,7 +18,7 @@ The authenticated home page includes account information and recent filing perio
 
 ## Form 120
 
-The `Presentar Declaracion` shortcut has a session-dependent internal link similar to:
+The `Presentar Declaración` shortcut (accessible name from its `title`, with accent) has a session-dependent internal link similar to:
 
 ```text
 recibirDDJJContribuyente.do?_cyp=...

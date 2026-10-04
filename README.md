@@ -29,19 +29,19 @@ The default behavior is always `dry-run`. A real submission requires all three c
 2. confirm the exact period with `--confirm-period YYYY-MM`;
 3. enable `MARANGATU_SUBMIT=true`, which the supervised launcher does only for that child process.
 
-`--dry-run` and `--submit` are mutually exclusive. The Linux/WSL systemd timer submits unattended (see Monthly scheduling); the Windows task is dry-run only, and the supervised launcher does not accept `--force`.
+`--dry-run` and `--submit` are mutually exclusive. The Linux/WSL systemd timer submits unattended (see Monthly scheduling); the Windows task is dry-run only, and `--force` is accepted only in dry-run.
 
 The automation does not bypass CAPTCHA, MFA, or any other portal control. Stop the workflow if one appears and complete it manually only when authorized.
 
 ## Requirements
 
-- Node.js 20 or later.
+- Node.js 22 or later.
 - npm.
 - Chromium installed through Playwright.
 - Your own authorized Marangatu account.
 - Linux/WSL with systemd for the included user timer, or Windows for the Task Scheduler setup. Manual runs also work on macOS.
 
-The current workflow has been validated locally with Node.js 22.
+The current workflow has been validated locally with Node.js 22 and 24.
 
 ## Installation
 
@@ -121,10 +121,16 @@ npm run submit -- --confirm-period 2026-08
 
 Replace `2026-08` with the current previous-month period in Madrid. The launcher rejects any different period.
 
-Run the deterministic test suite:
+Run the deterministic test suite (`test/*.test.mjs`, Node's built-in runner, no portal access):
 
 ```bash
 npm test
+```
+
+Send a test message through every enabled notification channel, without opening Marangatu:
+
+```bash
+npm run notify:test
 ```
 
 ## Notifications
@@ -192,20 +198,20 @@ npm.cmd run register-task
 
 The task wakes at 12:00 and 12:30, while `scripts/run-monthly-check.ps1` runs Node only when Madrid time is between 12:00 and 12:59 on day 1. `.state/last-run.txt` prevents duplicate monthly runs.
 
-The Windows task always uses `--dry-run`. Forms in `error` state are never retried automatically.
+The Windows task always uses `--dry-run`. Forms in `error` state are never retried automatically. It is a legacy setup: never enable it on a machine that also runs the systemd timer, because both would sign in to the same account at 12:00.
 
 ## Evidence and privacy
 
-- `artifacts/` contains potentially sensitive screenshots and debug HTML.
+- `artifacts/` contains potentially sensitive screenshots and debug HTML (session URLs redacted). When a run fails, every open browser tab is captured as `97-error-N`.
 - `presentaciones/YYYY-MM/` contains the filed documents, grouped by filed period: `F120-resultado` (submission result with control code), `F120-declaracion` (the filed "Declaración Jurada Original"), `F241-resultado` (submission result), and `F241-talon` (the filed "Talón de Presentación" from Consulta de Declaraciones Informativas), each as PNG, HTML with session URLs redacted, and PDF when Chromium runs headless.
 - `logs/` contains the output of scheduled runs.
 - `.state/forms.json` stores local state to prevent duplicate submissions.
 - `.env`, `.state/`, `artifacts/`, and filing evidence are ignored by Git.
 
-On Windows, remove debug checkpoints with:
+Remove debug checkpoints (filing evidence in `presentaciones/` is never touched) with:
 
-```powershell
-npm.cmd run clean:artifacts
+```bash
+npm run clean:artifacts
 ```
 
 Never publish screenshots, HTML, filing evidence, tax identifiers, credentials, or session URLs. See [SECURITY.md](SECURITY.md) to report a security issue or accidental exposure.

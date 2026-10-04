@@ -22,6 +22,7 @@ The automation covers Forms 120 and 241, safe dry-runs, supervised real submissi
 
 ```bash
 npm test
+npm run notify:test
 npm run dry-run
 scripts/run-monthly.sh --dry-run
 npm run submit -- --confirm-period YYYY-MM --check

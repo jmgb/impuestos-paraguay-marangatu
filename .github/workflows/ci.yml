@@ -27,6 +27,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check shell script syntax
+        run: bash -n scripts/*.sh
+
       - name: Run deterministic tests
         run: npm test
 

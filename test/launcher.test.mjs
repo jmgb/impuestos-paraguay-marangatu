@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 
 import {
   LauncherError,
+  effectiveConfig,
   parseLauncherArgs,
-  previousMonthStateKey,
   validateLauncherConfig
-} from "./run-supervised-submit.mjs";
+} from "../scripts/run-supervised-submit.mjs";
 
 assert.deepEqual(
   parseLauncherArgs([
@@ -24,15 +24,6 @@ assert.deepEqual(
 assert.throws(
   () => parseLauncherArgs(["--force"]),
   error => error instanceof LauncherError && error.exitCode === 2
-);
-
-assert.equal(
-  previousMonthStateKey(new Date("2026-01-15T12:00:00Z"), "Europe/Madrid"),
-  "2025-12"
-);
-assert.equal(
-  previousMonthStateKey(new Date("2026-09-01T10:00:00Z"), "Europe/Madrid"),
-  "2026-08"
 );
 
 const validConfig = {
@@ -60,6 +51,24 @@ assert.throws(
     expectedPeriod: "2026-08"
   }),
   error => error instanceof LauncherError && error.exitCode === 6
+);
+
+assert.throws(
+  () => validateLauncherConfig({
+    config: effectiveConfig(validConfig, { MARANGATU_HEADLESS: "true" }),
+    confirmPeriod: "2026-08",
+    expectedPeriod: "2026-08"
+  }),
+  error => error instanceof LauncherError && error.exitCode === 6,
+  "una variable de entorno prevalece sobre el .env, como en dotenv"
+);
+assert.throws(
+  () => validateLauncherConfig({
+    config: { MARANGATU_USER: "user" },
+    confirmPeriod: "2026-08",
+    expectedPeriod: "2026-08"
+  }),
+  error => error instanceof LauncherError && error.exitCode === 4
 );
 
 console.log("Launcher tests passed.");

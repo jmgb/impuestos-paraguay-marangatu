@@ -1,13 +1,6 @@
 import assert from "node:assert/strict";
 
-import {
-  escapeTelegramHtml,
-  buildResultSummary,
-  sendTelegramMessage
-} from "../src/marangatu.js";
-
-assert.equal(escapeTelegramHtml("a < b & c > d"), "a &lt; b &amp; c &gt; d");
-assert.equal(escapeTelegramHtml(123), "123");
+import { buildResultSummary, sendTelegramMessage } from "../src/telegram.js";
 
 const okSummary = buildResultSummary({
   period: { year: 2026, month: 4 },
@@ -68,5 +61,27 @@ const sentNoConfig = await sendTelegramMessage("hola", { referencia: "test" });
 assert.equal(sentNoConfig, false, "sin token/chat_id debe devolver false sin lanzar");
 if (previousToken !== undefined) process.env.MARANGATU_TELEGRAM_TOKEN = previousToken;
 if (previousChat !== undefined) process.env.MARANGATU_TELEGRAM_CHAT_ID = previousChat;
+
+const requests = [];
+const okFetch = async (url, options) => {
+  requests.push({ url, body: JSON.parse(options.body) });
+  return new Response("{}", { status: 200 });
+};
+assert.equal(await sendTelegramMessage("<b>hola</b>", { token: "T", chatId: "C", fetchImpl: okFetch }), true);
+assert.equal(requests[0].url, "https://api.telegram.org/botT/sendMessage");
+assert.deepEqual(requests[0].body, {
+  chat_id: "C",
+  text: "<b>hola</b>",
+  parse_mode: "HTML",
+  disable_web_page_preview: true
+});
+
+let rejectedCalls = 0;
+const rejectFetch = async () => {
+  rejectedCalls += 1;
+  return new Response("Bad Request", { status: 400 });
+};
+assert.equal(await sendTelegramMessage("x", { token: "T", chatId: "C", fetchImpl: rejectFetch }), false);
+assert.equal(rejectedCalls, 1, "un 400 no se reintenta");
 
 console.log("Telegram tests passed.");
