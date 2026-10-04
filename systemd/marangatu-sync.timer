@@ -1,0 +1,9 @@
+[Unit]
+Description=Copia diaria de presentaciones/ desde alfredo (13:00 de Madrid)
+
+[Timer]
+OnCalendar=*-*-* 13:00:00 Europe/Madrid
+Persistent=true
+
+[Install]
+WantedBy=timers.target

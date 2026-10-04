@@ -190,6 +190,16 @@ scripts/run-monthly.sh --dry-run   # manual test, never submits (also accepts --
 
 The script runs headless unless `MARANGATU_HEADLESS` is already set in the environment, and writes each run to `logs/YYYY-MM-DD_HHMMSS-<mode>.log` (ignored by Git). After a submission, the log is also copied to `presentaciones/YYYY-MM/`. Run the timer on exactly one machine, because `.state/forms.json` prevents duplicates only locally. The owner's setup runs it on an always-on VPS with `loginctl enable-linger`; on WSL, timers only run while the distribution is up, so a PC that is off delays the filing. The period is computed at run time, so a machine that stays off for the whole following month would file the newer period instead. If the service fails before Node can notify (missing Node, systemd timeout), `marangatu-monthly-failure.service` runs `scripts/notify-failure.sh`, which sends a generic Telegram alert unless the run's log already records one.
 
+#### Copying filed documents to another machine
+
+When the timer runs on a remote host, `systemd/marangatu-sync.timer` on the local machine runs `scripts/sync-presentaciones.sh` every day at 13:00 Madrid time (`Persistent=true`). It pulls the remote `presentaciones/` with `rsync` over non-interactive SSH and never deletes local files. Set `MARANGATU_SYNC_HOST` in the unit's environment to change the SSH host (default `alfredo`). If the copy fails, `marangatu-sync-failure.service` sends a Telegram alert through `scripts/notify-failure.sh`.
+
+```bash
+ln -sf "$PWD"/systemd/marangatu-sync{,-failure}.service "$PWD/systemd/marangatu-sync.timer" ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now marangatu-sync.timer
+```
+
 ### Windows Task Scheduler
 
 ```powershell

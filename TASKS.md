@@ -15,9 +15,4 @@ Check:
 - [ ] `presentaciones/2026-10/` contains `F120-resultado`, `F120-declaracion`, `F241-resultado`, `F241-talon` (PNG, HTML, PDF) and the run log.
 - [ ] `.state/forms.json` has no `error` for `2026-10`.
 - [ ] `journalctl --user -u marangatu-monthly` shows a successful run.
-
-## Copy filed documents back from alfredo
-
-The monthly run moved to alfredo on 2026-10-04 (timer enabled there, disabled on the WSL PC; tests, dry-run, Telegram and Gmail verified from the VPS). Filing evidence now lands in alfredo's `presentaciones/`; this PC keeps the archive up to 2026-09.
-
-- [ ] Add a way to copy it back after each run, for example a localhost systemd timer on day 1 and day 2 running `rsync -a alfredo:~/ai_projects/codex_projects/impuestos-paraguay/presentaciones/ presentaciones/`.
+- [ ] On the WSL PC, `presentaciones/2026-10/` arrived through `marangatu-sync.timer` (`journalctl --user -u marangatu-sync`).

@@ -1,0 +1,6 @@
+[Unit]
+Description=Marangatu: aviso por Telegram si falla marangatu-sync.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash %h/ai_projects/codex_projects/impuestos-paraguay/scripts/notify-failure.sh "[PARAGUAY IMPUESTOS] No se pudieron copiar los documentos presentados desde alfredo a este PC. Revisa: journalctl --user -u marangatu-sync"

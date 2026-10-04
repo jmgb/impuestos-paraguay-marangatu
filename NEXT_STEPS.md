@@ -4,8 +4,8 @@ The automation covers Forms 120 and 241, safe dry-runs, supervised real submissi
 
 ## Monthly operation
 
-1. On day 1, `marangatu-monthly.timer` submits the previous month unattended (Linux/WSL).
-2. Check the Telegram summary and the documents in `presentaciones/YYYY-MM/`.
+1. On day 1, `marangatu-monthly.timer` on alfredo submits the previous month unattended.
+2. Check the Telegram summary and the documents in `presentaciones/YYYY-MM/`, which `marangatu-sync.timer` copies to the WSL PC daily at 13:00.
 3. If a form ends in `error`, review `artifacts/` and `logs/`, then authorize `--retry-error` manually.
 4. Confirm Form 120 in `Consultar Declaraciones` and Form 241 with no pending slips.
 5. Retain filing evidence and remove debug artifacts when they are no longer needed.
