@@ -23,7 +23,7 @@
     "notify:test": "node scripts/send-test-notification.mjs"
   },
   "dependencies": {
-    "dotenv": "^18.0.1",
+    "dotenv": "^18.0.5",
     "playwright": "^1.62.1"
   }
 }
