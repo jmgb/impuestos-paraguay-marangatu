@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { displayPeriod, periodStateKey } from "./core.js";
+import { displayPeriod, forms, periodStateKey } from "./core.js";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const stateDir = path.join(rootDir, ".state");
@@ -36,6 +36,12 @@ function loadFormState(filePath = formStateFile) {
 
 function saveFormState(state, filePath = formStateFile) {
   return writeJsonAtomic(filePath, state);
+}
+
+async function pendingFormsForPeriod(period, filePath = formStateFile) {
+  const state = await loadFormState(filePath);
+  const periodState = state[periodStateKey(period)];
+  return forms.filter(form => !terminalStatuses.includes(periodState?.[form]?.status));
 }
 
 async function getFormStatus(period, form, filePath = formStateFile) {
@@ -92,6 +98,7 @@ export {
   writeJsonAtomic,
   loadFormState,
   saveFormState,
+  pendingFormsForPeriod,
   getFormStatus,
   setFormStatus,
   runFormWithStateTracking

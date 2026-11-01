@@ -79,6 +79,7 @@ assert.deepEqual(
     skipF120: false,
     skipF241: false,
     force: false,
+    retryPending: false,
     year: 2026,
     month: 5,
     confirmPeriod: undefined,

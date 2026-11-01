@@ -1,8 +1,8 @@
 [Unit]
-Description=Lanza marangatu-monthly.service el día 1 de cada mes a las 12:00 de Madrid
+Description=Reintenta los formularios pendientes del mes anterior a diario a las 12:00 de Madrid
 
 [Timer]
-OnCalendar=*-*-01 12:00:00 Europe/Madrid
+OnCalendar=*-*-* 12:00:00 Europe/Madrid
 Persistent=true
 
 [Install]

@@ -21,6 +21,7 @@ import {
 import { sendPresentationConfirmation } from "./email-notifier.js";
 import {
   emailStateFile,
+  pendingFormsForPeriod,
   rootDir,
   runFormWithStateTracking,
   setFormStatus
@@ -605,7 +606,7 @@ async function openFormulario241Talon(gestionPage) {
   return talonPage;
 }
 
-async function runForm(page, formName, period, submit, args) {
+async function runForm(page, formName, period, submit, args, stateFilePath) {
   if (formName === "F120" ? args.skipF120 : args.skipF241) {
     return { form: formName, status: "saltado por flag", skipped: true, skippedReason: "skip flag" };
   }
@@ -613,7 +614,8 @@ async function runForm(page, formName, period, submit, args) {
     formName,
     period,
     submit,
-    retryError: args.retryError === formName,
+    stateFilePath,
+    retryError: args.retryPending || args.retryError === formName,
     fn: () => formName === "F120"
       ? prepareFormulario120(page, period, submit, args.force)
       : prepareFormulario241(page, period, submit)
@@ -629,8 +631,11 @@ async function runForm(page, formName, period, submit, args) {
   };
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+export async function main(argv = process.argv.slice(2), {
+  stateFilePath,
+  launchBrowser = options => chromium.launch(options)
+} = {}) {
+  const args = parseArgs(argv);
   const period = targetPeriod(args);
   const mode = resolveRunMode(args, period);
   const submit = mode === "submit";
@@ -638,7 +643,18 @@ async function main() {
   console.log(`Target period: ${displayPeriod(period)}`);
   console.log(`Real submission enabled: ${submit ? "yes" : "no"}`);
 
-  const browser = await chromium.launch({
+  if (submit && args.retryPending) {
+    const pending = (await pendingFormsForPeriod(period, stateFilePath))
+      .filter(form => !(form === "F120" ? args.skipF120 : args.skipF241));
+    if (pending.length === 0) {
+      console.log(`Sin formularios pendientes para ${displayPeriod(period)}; no se abre Marangatu.`);
+      return;
+    }
+    args.skipF120 = !pending.includes("F120");
+    args.skipF241 = !pending.includes("F241");
+  }
+
+  const browser = await launchBrowser({
     headless: booleanValue(process.env.MARANGATU_HEADLESS, false),
     slowMo: Number.parseInt(env("MARANGATU_SLOWMO_MS", "120"), 10) || 0
   });
@@ -651,7 +667,7 @@ async function main() {
     await login(page);
     for (const formName of forms) {
       try {
-        results.push(await runForm(page, formName, period, submit, args));
+        results.push(await runForm(page, formName, period, submit, args, stateFilePath));
       } catch (error) {
         results.push({ form: formName, status: "error", error: error.message });
         runError = error;
@@ -663,7 +679,7 @@ async function main() {
       if (!verified) {
         await setFormStatus(period, "F120", "error", {
           error: "No aparece en Consultar Declaraciones durante la verificación final."
-        }).catch(() => {});
+        }, stateFilePath).catch(() => {});
         throw new Error(`F120: la verificación final en Consultar Declaraciones no confirmó ${displayPeriod(period)}.`);
       }
       console.log(`F120 verified in Consultar Declaraciones for ${displayPeriod(period)}.`);

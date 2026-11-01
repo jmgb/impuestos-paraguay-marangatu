@@ -100,6 +100,7 @@ function parseArgs(argv) {
     skipF120: false,
     skipF241: false,
     force: false,
+    retryPending: false,
     year: undefined,
     month: undefined,
     confirmPeriod: undefined,
@@ -118,6 +119,7 @@ function parseArgs(argv) {
     else if (arg === "--skip-f120") args.skipF120 = true;
     else if (arg === "--skip-f241") args.skipF241 = true;
     else if (arg === "--force") args.force = true;
+    else if (arg === "--retry-pending") args.retryPending = true;
     else if (arg === "--year") args.year = Number(valueOf(i++, arg));
     else if (arg === "--month") args.month = Number(valueOf(i++, arg));
     else if (arg === "--confirm-period") args.confirmPeriod = valueOf(i++, arg);
@@ -145,6 +147,9 @@ function resolveRunMode(args, period, environment = process.env) {
     }
     if (args.retryError) {
       throw new Error("--retry-error solo puede usarse junto con --submit.");
+    }
+    if (args.retryPending) {
+      throw new Error("--retry-pending solo puede usarse junto con --submit.");
     }
     return "dry-run";
   }

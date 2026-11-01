@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Ejecucion mensual desatendida (systemd user timer en Linux/WSL).
+# Comprobacion diaria del mes anterior (systemd user timer en Linux/WSL).
 # Por defecto PRESENTA los formularios del mes anterior en Madrid; con
 # --dry-run solo prepara. src/marangatu.js mantiene sus controles: estado en
-# .state/forms.json (no repite presentados, se para ante un 'error' previo)
+# .state/forms.json (no abre el portal si ambos formularios estan completos)
 # y verificacion en el portal antes de dar nada por presentado.
 set -uo pipefail
 
@@ -27,7 +27,7 @@ done
 if [ "$mode" = "dry-run" ]; then
   cmd=(node src/marangatu.js --dry-run "${extra[@]}")
 else
-  cmd=(node src/marangatu.js --submit --confirm-period "$period" "${extra[@]}")
+  cmd=(node src/marangatu.js --submit --retry-pending --confirm-period "$period" "${extra[@]}")
 fi
 
 mkdir -p logs

@@ -12,7 +12,7 @@ The project does not determine tax residency, eligibility for zero-activity fili
 
 Without `--year` and `--month`, `previousMonthPeriod` selects the previous calendar month in `Europe/Madrid`. January correctly rolls back to December of the previous year.
 
-Since 2026-10-04 the schedule runs only on the VPS `alfredo` (always on, `Linger=yes`), from the checkout at `~/ai_projects/codex_projects/impuestos-paraguay`; the timer is disabled on the WSL PC. Only one machine may run it, because `.state/forms.json` prevents duplicates only locally. On alfredo, filing evidence, `logs/` and `.state/` live in that checkout, and `MARANGATU_GMAIL_CREDENTIALS_ENV` points to `~/.config/marangatu/gmail.env` (a copy of the OAuth keys; refresh it if the token is rotated). On the WSL PC, `systemd/marangatu-sync.timer` (daily, 13:00 Madrid, `Persistent=true`) runs `scripts/sync-presentaciones.sh`, which pulls alfredo's `presentaciones/` with `rsync` and never deletes local files; on failure it sends a Telegram alert. The schedule is the systemd user timer `systemd/marangatu-monthly.timer` (day 1, 12:00 Madrid, `Persistent=true`), which runs `scripts/run-monthly.sh` headless in **submit** mode and logs to `logs/`; `OnFailure=` triggers `scripts/notify-failure.sh` as a Telegram fallback. The owner explicitly authorized unattended monthly submission on 2026-10-01. The legacy Windows task wakes at 12:00 and 12:30. `scripts/run-monthly-check.ps1` runs Node only between 12:00 and 12:59 Madrid time on day 1 and uses `.state/last-run.txt` to prevent a second run in the same month. The Windows task is dry-run only.
+Since 2026-10-04 the schedule runs only on the VPS `alfredo` (always on, `Linger=yes`), from the checkout at `~/ai_projects/codex_projects/impuestos-paraguay`; the timer is disabled on the WSL PC. Only one machine may run it, because `.state/forms.json` prevents duplicates only locally. On alfredo, filing evidence, `logs/` and `.state/` live in that checkout, and `MARANGATU_GMAIL_CREDENTIALS_ENV` points to `~/.config/marangatu/gmail.env` (a copy of the OAuth keys; refresh it if the token is rotated). On the WSL PC, `systemd/marangatu-sync.timer` (daily, 13:00 Madrid, `Persistent=true`) runs `scripts/sync-presentaciones.sh`, which pulls alfredo's `presentaciones/` with `rsync` and never deletes local files; on failure it sends a Telegram alert. The schedule is the systemd user timer `systemd/marangatu-monthly.timer` (daily, 12:00 Madrid, `Persistent=true`), which runs `scripts/run-monthly.sh` headless in **submit** mode and logs to `logs/`; `OnFailure=` triggers `scripts/notify-failure.sh` as a Telegram fallback. The owner authorized unattended monthly submission on 2026-10-01 and daily retries of unfinished previous-month forms on 2026-11-01. With `--retry-pending`, a completed period exits before opening the browser or sending notifications; otherwise only unfinished forms are attempted, including previous `error` states, with portal verification before any submission. The legacy Windows task wakes at 12:00 and 12:30. `scripts/run-monthly-check.ps1` runs Node only between 12:00 and 12:59 Madrid time on day 1 and uses `.state/last-run.txt` to prevent a second run in the same month. The Windows task is dry-run only.
 
 ### Form 120 — monthly VAT
 
@@ -66,7 +66,7 @@ Real submission has three independent interlocks:
 2. `MARANGATU_SUBMIT=true` must exist in the child environment;
 3. `--confirm-period YYYY-MM` must exactly match the previous month in Madrid.
 
-`scripts/run-supervised-submit.mjs` is the cross-platform launcher that enables the environment interlock only for the supervised child process. `scripts/run-supervised-submit.sh` remains as a compatibility wrapper. Never remove or weaken these controls. The only scheduled submit path is `scripts/run-monthly.sh`, which sets all three interlocks itself for the computed previous Madrid month; do not add other scheduled submit paths or automatic `--retry-error`.
+`scripts/run-supervised-submit.mjs` is the cross-platform launcher that enables the environment interlock only for the supervised child process. `scripts/run-supervised-submit.sh` remains as a compatibility wrapper. Never remove or weaken these controls. The only scheduled submit path is `scripts/run-monthly.sh`, which sets all three interlocks itself for the computed previous Madrid month; do not add other scheduled submit paths. Its authorized `--retry-pending` mode retries unfinished forms, while the manual launcher retains per-form `--retry-error` authorization.
 
 ### Local form state
 
@@ -74,7 +74,7 @@ In submit mode, `runFormWithStateTracking` writes `.state/forms.json`:
 
 - `iniciado` becomes `presentado`, `sin-pendientes`, or `error`;
 - terminal `presentado` and `sin-pendientes` states are skipped without a submit bypass;
-- an `error` state requires artifact review, fresh user authorization, and `--retry-error F120|F241`;
+- an `error` state requires `--retry-error F120|F241` for manual retries, or the owner-authorized scheduled `--retry-pending` mode; neither mode bypasses terminal-state or portal duplicate checks;
 - dry-runs neither read nor write submit state.
 
 `--force` is rejected in submit mode by both the CLI and the supervised launcher. In dry-run only, `--force` may be used for an explicit UI inspection of a Form 120 period that is already filed.

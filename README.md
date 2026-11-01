@@ -179,7 +179,7 @@ The external file must contain `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and t
 
 ### Linux / WSL (systemd user timer, unattended submission)
 
-`systemd/marangatu-monthly.timer` starts `scripts/run-monthly.sh` on day 1 at 12:00 Madrid time. The script **submits** the previous Madrid month: it passes `--submit`, `MARANGATU_SUBMIT=true`, and the computed `--confirm-period` to `src/marangatu.js`, so period validation, `.state/forms.json` duplicate protection, the stop on a previous `error`, and portal verification still apply. `Persistent=true` runs a missed month as soon as the machine is back on. The units assume the checkout lives at `~/ai_projects/codex_projects/impuestos-paraguay`; adjust `ExecStart` otherwise.
+`systemd/marangatu-monthly.timer` starts `scripts/run-monthly.sh` every day at 12:00 Madrid time. The script checks the previous Madrid month with `--retry-pending`: if both forms have verified terminal states (`presentado` or `sin-pendientes`) in `.state/forms.json`, it exits before opening the browser or sending notifications. Otherwise it attempts only unfinished forms, including those in `error` or `iniciado`, and tries again the following day if needed. Each form checks the portal before submission, so an accepted submission whose local result was lost is not sent again. The script still supplies all three interlocks: `--submit`, `MARANGATU_SUBMIT=true`, and the computed `--confirm-period`. Manual runs retain their per-form `--retry-error` requirement. `Persistent=true` catches a missed daily check when the machine returns. The units assume the checkout lives at `~/ai_projects/codex_projects/impuestos-paraguay`; adjust `ExecStart` otherwise.
 
 ```bash
 ln -sf "$PWD"/systemd/marangatu-monthly{,-failure}.service "$PWD/systemd/marangatu-monthly.timer" ~/.config/systemd/user/
@@ -208,7 +208,7 @@ npm.cmd run register-task
 
 The task wakes at 12:00 and 12:30, while `scripts/run-monthly-check.ps1` runs Node only when Madrid time is between 12:00 and 12:59 on day 1. `.state/last-run.txt` prevents duplicate monthly runs.
 
-The Windows task always uses `--dry-run`. Forms in `error` state are never retried automatically. It is a legacy setup: never enable it on a machine that also runs the systemd timer, because both would sign in to the same account at 12:00.
+The Windows task always uses `--dry-run` and does not retry submission errors. It is a legacy setup: never enable it on a machine that also runs the systemd timer, because both would sign in to the same account at 12:00.
 
 ## Evidence and privacy
 
