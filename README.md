@@ -192,7 +192,7 @@ The script runs headless unless `MARANGATU_HEADLESS` is already set in the envir
 
 #### Copying filed documents to another machine
 
-When the timer runs on a remote host, `systemd/marangatu-sync.timer` on the local machine runs `scripts/sync-presentaciones.sh` every day at 13:00 Madrid time (`Persistent=true`). It pulls the remote `presentaciones/` with `rsync` over non-interactive SSH and never deletes local files. Set `MARANGATU_SYNC_HOST` in the unit's environment to change the SSH host (default `alfredo`). If the copy fails, `marangatu-sync-failure.service` sends a Telegram alert through `scripts/notify-failure.sh`.
+When the timer runs on a remote host, `systemd/marangatu-sync.timer` on the local machine runs `scripts/sync-presentaciones.sh` every day at 13:00 Madrid time (`Persistent=true`). It pulls the remote `presentaciones/` as a tar (regular files and directories only) through the restricted SSH account `marangatu-sync` (alias `marangatu-alfredo` in `~/.ssh/config`, ForceCommand that only accepts `presentaciones`; the `ubuntu` SSH login was retired on 2026-11-01) and never deletes local files. Set `MARANGATU_SYNC_HOST` in the unit's environment to change the SSH alias (default `marangatu-alfredo`). If the copy fails, `marangatu-sync-failure.service` sends a Telegram alert through `scripts/notify-failure.sh`.
 
 ```bash
 ln -sf "$PWD"/systemd/marangatu-sync{,-failure}.service "$PWD/systemd/marangatu-sync.timer" ~/.config/systemd/user/
