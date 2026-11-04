@@ -8,6 +8,12 @@ set -uo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root" || exit 1
 
+# Telegram en HTML: texto escapado y "[REPO]" inicial en negrita.
+telegram_html() {
+    printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
+        -e '1s/^\(\[[^]]*\]\)/<b>\1<\/b>/'
+}
+
 env_value() {
   grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- | sed -E 's/^["'\'']|["'\'']$//g'
 }
@@ -33,4 +39,4 @@ fi
 curl -sS --max-time 15 -o /dev/null -w "Telegram HTTP %{http_code}\n" \
   "https://api.telegram.org/bot${token}/sendMessage" \
   --data-urlencode "chat_id=${chat_id}" \
-  --data-urlencode "text=${text}"
+  --data-urlencode "parse_mode=HTML" --data-urlencode "text=$(telegram_html "${text}")"
