@@ -99,3 +99,7 @@ Configuración (en `.env`):
 - `MARANGATU_TELEGRAM_CHAT_ID` — chat o canal destinatario.
 
 Si falta cualquiera de las dos variables, el envío se salta silenciosamente con un log claro. La implementación (`sendTelegramMessage`) usa `fetch` nativo, parse mode `HTML`, escape conservador (`&` `<` `>`) y reintento básico ante 429/red. Inspirada en `presupuestor/backend/app/services/telegram_service.py` pero simplificada: un único mensaje por corrida, sin chunking ni `ThreadPoolExecutor` (no aplica en un script de un solo paso).
+
+## Secretos
+
+Leer o ver un secreto en una sesión no obliga a rotarlo. Se rotan cada 90 días para minimizar riesgos, salvo que se expongan en un sitio público o a terceros o queden invalidados: entonces, en el momento.
