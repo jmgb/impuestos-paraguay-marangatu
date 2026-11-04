@@ -1,6 +1,35 @@
+import { appendFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { displayPeriod, escapeHtml } from "./core.js";
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+function activityPath() {
+  if (process.env.TELEGRAM_ACTIVITY_LOG) return process.env.TELEGRAM_ACTIVITY_LOG;
+  const directory = join(homedir(), "ai_projects/autofix-control-plane/logs/telegram-panel");
+  return existsSync(directory) ? join(directory, "impuestos-paraguay-marangatu.jsonl") : "";
+}
+
+// Copia para el panel de agentes: una línea, un único write y best-effort.
+function copyActivity(text, referencia) {
+  try {
+    const path = activityPath();
+    if (!path) return;
+    const nivel = /[❌🔴🚨⛔]/u.test(text) ? "error" : text.includes("⚠") ? "warning" : "ok";
+    const texto = Buffer.from(text).subarray(0, 4096).toString("utf8").replace(/\ufffd+$/u, "");
+    appendFileSync(path, `${JSON.stringify({
+      ts: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+      repo: "impuestos-paraguay-marangatu",
+      host: process.env.TELEGRAM_ACTIVITY_HOST || "localhost",
+      nivel,
+      referencia,
+      texto
+    })}\n`);
+  } catch {
+    // La copia nunca afecta al envío.
+  }
+}
 
 async function sendTelegramMessage(text, { token, chatId, referencia = "", fetchImpl = fetch } = {}) {
   const finalToken = token || process.env.MARANGATU_TELEGRAM_TOKEN;
@@ -31,6 +60,7 @@ async function sendTelegramMessage(text, { token, chatId, referencia = "", fetch
 
       if (response.ok) {
         console.log(`Telegram enviado correctamente${ref}.`);
+        copyActivity(text, referencia);
         return true;
       }
 
