@@ -36,7 +36,19 @@ else
   fi
   text="[PARAGUAY IMPUESTOS] La ejecucion mensual programada ha fallado sin que la automatizacion pudiera avisar. Revisa: journalctl --user -u marangatu-monthly y la carpeta logs/."
 fi
-curl -sS --max-time 15 -o /dev/null -w "Telegram HTTP %{http_code}\n" \
+code="$(curl -sS --max-time 15 -o /dev/null -w "%{http_code}" \
   "https://api.telegram.org/bot${token}/sendMessage" \
   --data-urlencode "chat_id=${chat_id}" \
-  --data-urlencode "parse_mode=HTML" --data-urlencode "text=$(telegram_html "${text}")"
+  --data-urlencode "parse_mode=HTML" --data-urlencode "text=$(telegram_html "${text}")")"
+echo "Telegram HTTP ${code}"
+
+# Copia para el panel de agentes, solo si Telegram la aceptó. Best-effort.
+activity_dir="${HOME}/ai_projects/autofix-control-plane"
+if [ "$code" = 200 ] && [ -f "$activity_dir/tools/telegram-activity-log.sh" ]; then
+  (
+    . "$activity_dir/tools/telegram-activity-log.sh"
+    export TELEGRAM_ACTIVITY_HOST="${TELEGRAM_ACTIVITY_HOST:-localhost}"
+    export TELEGRAM_ACTIVITY_LOG="${TELEGRAM_ACTIVITY_LOG:-$activity_dir/logs/telegram-panel/impuestos-paraguay-marangatu.jsonl}"
+    telegram_activity_log impuestos-paraguay-marangatu error notify-failure "$text"
+  ) || true
+fi
