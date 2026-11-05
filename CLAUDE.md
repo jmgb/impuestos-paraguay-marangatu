@@ -115,3 +115,7 @@ Gmail is eligible only after an error-free real run with at least one newly file
 - Add deterministic tests for pure logic and mocked notification behavior in `test/*.test.mjs`; `npm test` runs them all with `node --test`.
 - CI must never receive Marangatu, Telegram, or Gmail secrets and must never access the live portal.
 - Keep `.env.example`, README, tests, and implementation synchronized when adding configuration.
+
+## Git
+
+- Al terminar y superar las pruebas pertinentes, haz commit local sin pedir permiso, solo de los archivos de la tarea. Push solo con autorización explícita.
