@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Aviso de respaldo por Telegram para los OnFailure de systemd. Sin argumentos,
+# cubre marangatu-monthly.service cuando Node no llego a avisar (nvm/node
+# ausentes, timeout de systemd, etc.) y no repite si el log de esa ejecucion ya
+# registra un Telegram. Con un argumento, envia ese texto (marangatu-sync).
+set -uo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$root" || exit 1
+
+# Telegram en HTML: texto escapado y "[REPO]" inicial en negrita.
+telegram_html() {
+    printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' \
+        -e '1s/^\(\[[^]]*\]\)/<b>\1<\/b>/'
+}
+
+env_value() {
+  grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- | sed -E 's/^["'\'']|["'\'']$//g'
+}
+
+enabled="$(env_value MARANGATU_TELEGRAM_ENABLED | tr '[:upper:]' '[:lower:]')"
+token="$(env_value MARANGATU_TELEGRAM_TOKEN)"
+chat_id="$(env_value MARANGATU_TELEGRAM_CHAT_ID)"
+if [[ ! "$enabled" =~ ^(1|true|yes|si)$ ]] || [ -z "$token" ] || [ -z "$chat_id" ]; then
+  echo "Telegram desactivado o sin configurar; no se envia aviso."
+  exit 0
+fi
+
+if [ $# -gt 0 ]; then
+  text="$1"
+else
+  recent_log="$(find logs -maxdepth 1 -name '*.log' -mmin -60 2>/dev/null | sort | tail -1)"
+  if [ -n "$recent_log" ] && grep -q "Telegram enviado correctamente" "$recent_log"; then
+    echo "Node ya aviso por Telegram ($recent_log)."
+    exit 0
+  fi
+  text="[PARAGUAY IMPUESTOS] La ejecucion mensual programada ha fallado sin que la automatizacion pudiera avisar. Revisa: journalctl --user -u marangatu-monthly y la carpeta logs/."
+fi
+code="$(curl -sS --max-time 15 -o /dev/null -w "%{http_code}" \
+  "https://api.telegram.org/bot${token}/sendMessage" \
+  --data-urlencode "chat_id=${chat_id}" \
+  --data-urlencode "parse_mode=HTML" --data-urlencode "text=$(telegram_html "${text}")")"
+echo "Telegram HTTP ${code}"
+
+# Copia para el panel de agentes, solo si Telegram la aceptó. Best-effort.
+activity_dir="${HOME}/ai_projects/autofix-control-plane"
+if [ "$code" = 200 ] && [ -f "$activity_dir/tools/telegram-activity-log.sh" ]; then
+  (
+    . "$activity_dir/tools/telegram-activity-log.sh"
+    export TELEGRAM_ACTIVITY_HOST="${TELEGRAM_ACTIVITY_HOST:-localhost}"
+    export TELEGRAM_ACTIVITY_LOG="${TELEGRAM_ACTIVITY_LOG:-$activity_dir/logs/telegram-panel/impuestos-paraguay-marangatu.jsonl}"
+    telegram_activity_log impuestos-paraguay-marangatu error notify-failure "$text"
+  ) || true
+fi

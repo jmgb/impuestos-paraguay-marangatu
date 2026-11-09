@@ -1,0 +1,10 @@
+[Unit]
+Description=Marangatu: copia los documentos presentados desde alfredo a este PC
+Wants=network-online.target
+After=network-online.target
+OnFailure=marangatu-sync-failure.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash %h/ai_projects/codex_projects/impuestos-paraguay/scripts/sync-presentaciones.sh
+TimeoutStartSec=10min

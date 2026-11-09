@@ -1,64 +1,46 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 import dotenv from "dotenv";
 import { chromium } from "playwright";
 
-dotenv.config();
+import {
+  booleanValue,
+  displayPeriod,
+  forms,
+  matchesPresentedDeclaration,
+  monthLabels,
+  notificationPolicy,
+  parseArgs,
+  periodStateKey,
+  redactSessionUrls,
+  resolveRunMode,
+  targetPeriod
+} from "./core.js";
+import { sendPresentationConfirmation } from "./email-notifier.js";
+import {
+  emailStateFile,
+  pendingFormsForPeriod,
+  rootDir,
+  runFormWithStateTracking,
+  setFormStatus
+} from "./state.js";
+import { buildResultSummary, sendTelegramMessage } from "./telegram.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.resolve(__dirname, "..");
+// El .env se busca junto al proyecto, no en el directorio de trabajo.
+dotenv.config({ path: path.join(rootDir, ".env"), quiet: true });
+
 const artifactsDir = path.resolve(rootDir, process.env.MARANGATU_ARTIFACTS_DIR || "artifacts");
 const presentacionesDir = path.resolve(rootDir, process.env.MARANGATU_PRESENTACIONES_DIR || "presentaciones");
 
 const baseUrl = "https://marangatu.set.gov.py/eset/";
 const loginUrl = `${baseUrl}login`;
-const defaultTimeZone = "Europe/Madrid";
 const f241GestionPath = "gestionComprobantesVirtuales.do";
 const f241TalonPath = "gdi/presentacionTalonResumen.do";
-const stateDir = path.resolve(rootDir, ".state");
-const formStateFile = path.join(stateDir, "forms.json");
-
-const monthLabels = [
-  "Enero",
-  "Febrero",
-  "Marzo",
-  "Abril",
-  "Mayo",
-  "Junio",
-  "Julio",
-  "Agosto",
-  "Setiembre",
-  "Octubre",
-  "Noviembre",
-  "Diciembre"
-];
-
-function parseArgs(argv) {
-  const args = {
-    dryRun: false,
-    submit: false,
-    skipF120: false,
-    skipF241: false,
-    force: false,
-    year: undefined,
-    month: undefined
-  };
-
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg === "--dry-run") args.dryRun = true;
-    else if (arg === "--submit") args.submit = true;
-    else if (arg === "--skip-f120") args.skipF120 = true;
-    else if (arg === "--skip-f241") args.skipF241 = true;
-    else if (arg === "--force") args.force = true;
-    else if (arg === "--year") args.year = Number(argv[++i]);
-    else if (arg === "--month") args.month = Number(argv[++i]);
-  }
-
-  return args;
-}
+const f241GestionOption = "Gestion De Comprobantes Informativos";
+const f241GestionHeading = /Gesti.n de Comprobantes/;
+const noPendingTalons = "No existen talones pendientes de presentación";
 
 function env(name, fallback) {
   const value = process.env[name];
@@ -69,239 +51,41 @@ function env(name, fallback) {
   return value;
 }
 
-function boolEnv(name, fallback = false) {
-  const value = process.env[name];
-  if (value === undefined || value === "") return fallback;
-  return ["1", "true", "yes", "si"].includes(value.toLowerCase());
-}
-
-function validatePeriod(period) {
-  if (!Number.isInteger(period.year) || period.year < 2020) {
-    throw new Error(`Invalid year: ${period.year}`);
-  }
-  if (!Number.isInteger(period.month) || period.month < 1 || period.month > 12) {
-    throw new Error(`Invalid month: ${period.month}`);
-  }
-}
-
-function targetPeriod(args) {
-  const hasYear = args.year !== undefined;
-  const hasMonth = args.month !== undefined;
-  if (hasYear !== hasMonth) {
-    throw new Error("--year y --month deben pasarse juntos. Sin ambos, se usa el mes anterior por defecto.");
-  }
-  const period = hasYear
-    ? { year: args.year, month: args.month }
-    : previousMonthPeriod();
-  validatePeriod(period);
-  return period;
-}
-
-function datePartsInTimeZone(now, timeZone = defaultTimeZone) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "numeric",
-    day: "numeric"
-  }).formatToParts(now);
-
-  const value = type => Number(parts.find(part => part.type === type)?.value);
-  return {
-    year: value("year"),
-    month: value("month"),
-    day: value("day")
-  };
-}
-
-function previousMonthPeriod(now = new Date(), timeZone = defaultTimeZone) {
-  const { year, month } = datePartsInTimeZone(now, timeZone);
-  if (month === 1) {
-    return { year: year - 1, month: 12 };
-  }
-  return { year, month: month - 1 };
-}
-
-function periodKey(period) {
-  return `${String(period.month).padStart(2, "0")}/${period.year}`;
-}
-
-function periodStateKey(period) {
-  return `${period.year}-${String(period.month).padStart(2, "0")}`;
-}
-
-async function loadFormState(filePath = formStateFile) {
-  try {
-    const raw = await fs.readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch (error) {
-    if (error.code === "ENOENT") return {};
-    throw error;
-  }
-}
-
-async function saveFormState(state, filePath = formStateFile) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify(state, null, 2), "utf8");
-}
-
-async function getFormStatus(period, form, filePath = formStateFile) {
-  const state = await loadFormState(filePath);
-  const entry = state[periodStateKey(period)];
-  return entry && entry[form] ? entry[form] : null;
-}
-
-async function setFormStatus(period, form, status, extra = {}, filePath = formStateFile) {
-  const state = await loadFormState(filePath);
-  const key = periodStateKey(period);
-  state[key] = state[key] || {};
-  state[key][form] = {
-    status,
-    updated_at: new Date().toISOString(),
-    ...extra
-  };
-  await saveFormState(state, filePath);
-}
-
-async function runFormWithStateTracking({ formName, period, submit, force, fn }) {
-  if (submit && !force) {
-    const previous = await getFormStatus(period, formName);
-    if (previous && previous.status === "presentado") {
-      console.log(`${formName}: ya marcado como presentado para ${periodKey(period)}. Saltando (use --force para reintentar).`);
-      return { skipped: true, reason: "already-presented" };
-    }
-    if (previous && previous.status === "error") {
-      throw new Error(`${formName}: estado 'error' previo para ${periodKey(period)}. Revise artifacts/ y use --force para reintentar.`);
-    }
-  }
-
-  if (submit) {
-    await setFormStatus(period, formName, "iniciado").catch(error => {
-      console.log(`No se pudo persistir estado 'iniciado' de ${formName}: ${error.message}`);
-    });
-  }
-
-  try {
-    const result = await fn();
-    if (submit) {
-      await setFormStatus(period, formName, "presentado").catch(error => {
-        console.log(`No se pudo persistir estado 'presentado' de ${formName}: ${error.message}`);
-      });
-    }
-    return result;
-  } catch (error) {
-    if (submit) {
-      await setFormStatus(period, formName, "error", { error: error.message }).catch(() => {});
-    }
-    throw error;
-  }
-}
-
-async function ensureArtifactsDir() {
-  await fs.mkdir(artifactsDir, { recursive: true });
-}
-
-function escapeTelegramHtml(text) {
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-async function sendTelegramMessage(text, { token, chatId, referencia = "" } = {}) {
-  const finalToken = token || process.env.MARANGATU_TELEGRAM_TOKEN;
-  const finalChatId = chatId || process.env.MARANGATU_TELEGRAM_CHAT_ID;
-
-  if (!finalToken || !finalChatId) {
-    console.log(`Telegram skipped (token/chat_id no configurados)${referencia ? ` ref=${referencia}` : ""}.`);
-    return false;
-  }
-
-  const url = `https://api.telegram.org/bot${finalToken}/sendMessage`;
-  const body = JSON.stringify({
-    chat_id: finalChatId,
-    text,
-    parse_mode: "HTML",
-    disable_web_page_preview: true
-  });
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body,
-        signal: AbortSignal.timeout(10000)
-      });
-
-      if (response.ok) return true;
-
-      const detail = await response.text().catch(() => "");
-      if (response.status === 429 && attempt < 2) {
-        console.log(`Telegram 429, esperando 10s antes de reintentar (intento ${attempt + 1}/3).`);
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        continue;
-      }
-      console.log(`Telegram fallo HTTP ${response.status}: ${detail.slice(0, 200)}`);
-      return false;
-    } catch (error) {
-      console.log(`Telegram error de red (intento ${attempt + 1}/3): ${error.message}`);
-      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 5000));
-    }
-  }
-  return false;
-}
-
-function buildResultSummary({ period, mode, results }) {
-  const statusIcon = result => {
-    if (result.skipped) return "⏭️";
-    if (result.error) return "❌";
-    return "✅";
-  };
-
-  const lines = [`<b>[MARANGATU]</b> Periodo ${escapeTelegramHtml(periodKey(period))}`];
-  for (const result of results) {
-    const detail = result.error
-      ? ` — ${escapeTelegramHtml(result.error)}`
-      : result.skippedReason
-        ? ` (${escapeTelegramHtml(result.skippedReason)})`
-        : "";
-    lines.push(`${statusIcon(result)} <b>${escapeTelegramHtml(result.form)}</b>: ${escapeTelegramHtml(result.status)}${detail}`);
-    if (result.justificante) {
-      lines.push(`   Justificante: ${escapeTelegramHtml(result.justificante)}`);
-    }
-  }
-  lines.push("", `Modo: ${escapeTelegramHtml(mode)}`);
-  return lines.join("\n");
-}
-
-async function saveScreenshot(page, name) {
-  await ensureArtifactsDir();
-  const filePath = path.join(artifactsDir, `${name}.png`);
-  await page.screenshot({ path: filePath, fullPage: true });
-  return filePath;
-}
-
-async function saveHtml(page, name) {
-  await ensureArtifactsDir();
-  const filePath = path.join(artifactsDir, `${name}.html`);
-  await fs.writeFile(filePath, await page.content(), "utf8");
-  return filePath;
-}
-
+// Nunca lanza: un checkpoint de depuración no debe interrumpir una
+// presentación a medias.
 async function checkpoint(page, name) {
-  const png = await saveScreenshot(page, name).catch(() => undefined);
-  const html = await saveHtml(page, name).catch(() => undefined);
-  if (png) console.log(`Screenshot: ${png}`);
-  if (html) console.log(`HTML: ${html}`);
+  const png = path.join(artifactsDir, `${name}.png`);
+  const html = path.join(artifactsDir, `${name}.html`);
+  const saved = async write => write().then(() => true, () => false);
+  await fs.mkdir(artifactsDir, { recursive: true }).catch(() => {});
+  if (await saved(() => page.screenshot({ path: png, fullPage: true }))) {
+    console.log(`Screenshot: ${png}`);
+  }
+  if (await saved(async () => fs.writeFile(html, redactSessionUrls(await page.content()), "utf8"))) {
+    console.log(`HTML: ${html}`);
+  }
 }
 
-async function saveJustificante(page, period, formName) {
+// Ante un error, captura todas las pestañas abiertas: el fallo puede estar en
+// una ventana emergente del portal y no en la página principal.
+async function checkpointOpenPages(context, name) {
+  for (const [index, page] of context.pages().entries()) {
+    await checkpoint(page, `${name}-${index + 1}`);
+  }
+}
+
+// Guarda el documento presentado en presentaciones/YYYY-MM/ como PNG, HTML
+// (sin URLs de sesión) y PDF. Chromium solo genera PDF en modo headless.
+async function saveJustificante(page, period, name) {
   const periodDir = path.join(presentacionesDir, periodStateKey(period));
   await fs.mkdir(periodDir, { recursive: true });
-  const filePath = path.join(periodDir, `${formName}.png`);
+  const filePath = path.join(periodDir, `${name}.png`);
   await page.screenshot({ path: filePath, fullPage: true });
-  console.log(`Justificante guardado: ${filePath}`);
+  await fs.writeFile(path.join(periodDir, `${name}.html`), redactSessionUrls(await page.content()), "utf8");
+  await page.pdf({ path: path.join(periodDir, `${name}.pdf`), printBackground: true }).catch(error => {
+    console.log(`PDF de ${name} no generado: ${error.message.split("\n")[0]}`);
+  });
+  console.log(`Justificante guardado: ${path.join(periodDir, name)}.{png,html,pdf}`);
   return filePath;
 }
 
@@ -340,11 +124,15 @@ async function login(page) {
   await page.getByRole("button", { name: "Acceder", exact: true }).click();
   await waitForMarangatu(page);
 
-  const userName = env("MARANGATU_EXPECTED_NAME", "");
-  if (userName) {
-    await page.getByRole("link", { name: userName, exact: true }).waitFor({ state: "visible", timeout: 20000 });
+  try {
+    const userName = env("MARANGATU_EXPECTED_NAME", "");
+    if (userName) {
+      await page.getByRole("link", { name: userName, exact: true }).waitFor({ state: "visible", timeout: 20000 });
+    }
+    await page.locator('input[name="busqueda"], input[placeholder*="men"]').waitFor({ state: "visible", timeout: 20000 });
+  } catch (error) {
+    throw new Error(`Login no completado: revise credenciales, MARANGATU_EXPECTED_NAME o si el portal pide CAPTCHA/verificación adicional (${error.message.split("\n")[0]}).`);
   }
-  await page.locator('input[name="busqueda"], input[placeholder*="men"]').waitFor({ state: "visible", timeout: 20000 });
 
   await checkpoint(page, "02-home-after-login");
   console.log("Login completed.");
@@ -352,7 +140,7 @@ async function login(page) {
 
 async function findCommonOptionHref(page, optionName) {
   await openHome(page);
-  const link = page.getByRole("link", { name: optionName, exact: true });
+  const link = page.getByRole("link", { name: optionName });
   await link.waitFor({ state: "visible", timeout: 30000 });
   const href = await link.getAttribute("href");
   if (!href || href === "#") {
@@ -369,9 +157,8 @@ function findMarangatuUrlInHtml(html, pathFragment) {
 }
 
 async function openPresentDeclaration(page) {
-  const href = await findCommonOptionHref(page, "Presentar Declaracion")
-    .catch(() => findCommonOptionHref(page, "Presentar Declaración"));
-  console.log(`Opening Presentar Declaracion via href: ${href}`);
+  const href = await findCommonOptionHref(page, /^\s*Presentar Declaraci.n\s*$/);
+  console.log("Opening Presentar Declaracion via portal session URL (redacted).");
   await page.goto(href, { waitUntil: "domcontentloaded" });
   await waitForMarangatu(page);
   await page.getByRole("heading", { name: /Presentar Declaraci.n/ }).waitFor({ state: "visible", timeout: 20000 });
@@ -395,20 +182,143 @@ async function safeClick(page, locator, label) {
   await waitForMarangatu(page);
 }
 
-async function maybeAlreadyPresented(page, period) {
-  await openHome(page);
-  const latestDeclarations = page.getByText(periodKey(period), { exact: true });
-  return (await latestDeclarations.count()) > 0;
+async function findMenuApplicationUrl(page, description) {
+  return page.evaluate(expectedDescription => {
+    const root = document.querySelector('[data-ng-controller="MenuController as vm"]');
+    const vm = window.angular?.element(root)?.scope()?.vm;
+    const seen = new Set();
+
+    function find(value) {
+      if (!value || typeof value !== "object" || seen.has(value)) return undefined;
+      seen.add(value);
+      if (value.descripcion === expectedDescription) return value;
+      for (const child of Object.values(value)) {
+        const found = find(child);
+        if (found) return found;
+      }
+      return undefined;
+    }
+
+    return find(vm?.datos?.menu)?.url || "";
+  }, description);
 }
 
-async function prepareFormulario120(page, period, submit) {
-  if (await maybeAlreadyPresented(page, period)) {
-    console.log(`F120 appears in Ultimas Declaraciones for ${periodKey(period)}. Skipping duplicate preparation.`);
-    await checkpoint(page, "03-f120-already-presented");
-    return;
+async function openConsultarDeclaraciones(page) {
+  await openHome(page);
+  const category = page.getByText(/Declaraciones Juradas [Yy] Pagos/, { exact: true }).first();
+  await category.waitFor({ state: "visible", timeout: 20000 });
+  await category.click();
+  await page.waitForTimeout(1000);
+
+  const option = page.getByText("Consultar Declaraciones", { exact: true }).first();
+  await option.waitFor({ state: "visible", timeout: 20000 });
+  const dynamicUrl = await findMenuApplicationUrl(page, "Consultar Declaraciones");
+  if (dynamicUrl) {
+    console.log("Opening Consultar Declaraciones via portal session URL (redacted).");
+    await page.goto(new URL(dynamicUrl, page.url()).href, { waitUntil: "domcontentloaded" });
+  } else {
+    await option.locator("xpath=../..").click();
+  }
+  await waitForMarangatu(page);
+  await page.getByRole("heading", { name: /CONSULTAR DECLARACIONES/i })
+    .waitFor({ state: "visible", timeout: 20000 });
+}
+
+async function consultFormulario120Presented(page, period, checkpointName) {
+  await openConsultarDeclaraciones(page);
+  await page.locator('select[name="formulario"]').selectOption({ label: "120 - IVA GENERAL" });
+  await page.locator('input[name="periodo"]').fill(displayPeriod(period));
+  await page.locator('input[name="periodoHasta"]').fill(displayPeriod(period));
+  await page.locator('button[data-ng-click*="consultar"]').first().click();
+
+  const table = page.locator("table").first();
+  const noRecords = page.getByText("No se encontraron registros para la búsqueda", { exact: false }).first();
+  await Promise.race([
+    table.waitFor({ state: "visible", timeout: 30000 }),
+    noRecords.waitFor({ state: "visible", timeout: 30000 })
+  ]).catch(() => {});
+  await waitForMarangatu(page);
+  if (checkpointName) await checkpoint(page, checkpointName);
+  if (await noRecords.isVisible().catch(() => false)) return false;
+  if (!await table.isVisible().catch(() => false)) {
+    throw new Error("Consultar Declaraciones no devolvió tabla ni mensaje de ausencia de registros.");
   }
 
-  console.log(`Preparing F120 for ${periodKey(period)}.`);
+  const rows = await table.evaluate(element => {
+    const headers = [...element.querySelectorAll("th")].map(header => header.innerText.trim());
+    const index = label => headers.findIndex(header => header === label);
+    const indexes = {
+      periodo: index("Periodo"),
+      estado: index("Estado"),
+      formulario: index("Formulario"),
+      activa: index("Estado Activa")
+    };
+    return [...element.querySelectorAll("tbody tr")].map(row => {
+      const cells = [...row.querySelectorAll("td")].map(cell => cell.innerText.trim());
+      return Object.fromEntries(Object.entries(indexes).map(([key, cellIndex]) => [
+        key,
+        cellIndex >= 0 ? cells[cellIndex] : ""
+      ]));
+    });
+  });
+  return rows.some(row => matchesPresentedDeclaration(row, period, "120"));
+}
+
+async function verifyFormulario120Presented(page, period, checkpointName) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await consultFormulario120Presented(page, period, checkpointName)) return true;
+    await page.waitForTimeout(3000);
+  }
+  return false;
+}
+
+// Abre desde Consultar Declaraciones la "Declaración Jurada Original" del
+// periodo (pestaña nueva) y la guarda en presentaciones/YYYY-MM/.
+async function saveFormulario120Declaracion(page, period) {
+  if (!await consultFormulario120Presented(page, period)) {
+    throw new Error(`F120 ${displayPeriod(period)} no aparece en Consultar Declaraciones.`);
+  }
+  const row = page.locator("table tbody tr").filter({ hasText: displayPeriod(period) }).first();
+  const [detail] = await Promise.all([
+    page.context().waitForEvent("page", { timeout: 20000 }),
+    row.getByText("Consultar", { exact: true }).click()
+  ]);
+  try {
+    await detail.locator("h4").filter({ hasText: /DECLARACI.N JURADA\s+ORIGINAL/ }).first()
+      .waitFor({ state: "attached", timeout: 30000 });
+    await waitForMarangatu(detail);
+    return await saveJustificante(detail, period, "F120-declaracion");
+  } finally {
+    await detail.close().catch(() => {});
+  }
+}
+
+async function waitForFormulario120Submission(page) {
+  const sending = page.getByText("Enviando declaración", { exact: true }).first();
+  const appeared = await sending
+    .waitFor({ state: "visible", timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+  if (appeared) {
+    await sending.waitFor({ state: "hidden", timeout: 120000 });
+  }
+  await waitForMarangatu(page);
+}
+
+async function prepareFormulario120(page, period, submit, force = false) {
+  const alreadyPresented = await consultFormulario120Presented(page, period, "03-f120-consult-before");
+  // --force solo llega aquí en dry-run: resolveRunMode lo rechaza con --submit.
+  if (alreadyPresented && !force) {
+    console.log(`F120 appears in Ultimas Declaraciones for ${displayPeriod(period)}. Skipping duplicate preparation.`);
+    await checkpoint(page, "03-f120-already-presented");
+    return { status: "ya presentado en portal", stateStatus: "presentado" };
+  }
+
+  if (alreadyPresented) {
+    console.log(`F120 ${displayPeriod(period)} is already presented; forcing dry-run UI verification without submission.`);
+  }
+
+  console.log(`Preparing F120 for ${displayPeriod(period)}.`);
   await openPresentDeclaration(page);
 
   await selectByVisibleOption(page, "211 - IVA General - MENSUAL");
@@ -422,40 +332,56 @@ async function prepareFormulario120(page, period, submit) {
   if (!submit) {
     await showSubmitDisabledAlert(page, "F120", "El script se detuvo antes de pulsar Presentar Declaracion.");
     console.log("F120 stopped before final submission because submit mode is off.");
-    return;
+    return { status: "preparado hasta Presentar Declaración" };
   }
 
   await safeClick(page, page.getByRole("button", { name: /Presentar Declaraci.n/ }), "Presentar Declaracion");
-  const confirm = page.getByRole("button", { name: /Confirmar|Aceptar|Presentar/ }).first();
-  if (await confirm.isVisible().catch(() => false)) {
+  const confirm = page
+    .locator(".modal-dialog:visible")
+    .getByRole("button", { name: /^\s*(Confirmar|Aceptar|Presentar(?: Declaraci.n)?)\s*$/i })
+    .first();
+  if (await confirm.waitFor({ state: "visible", timeout: 10000 }).then(() => true).catch(() => false)) {
+    await checkpoint(page, "05-f120-confirmation-ready");
     await safeClick(page, confirm, "Confirmar F120");
   }
-  await checkpoint(page, "05-f120-submitted");
-  const justificante = await saveJustificante(page, period, "F120").catch(error => {
-    console.log(`No se pudo guardar justificante F120: ${error.message}`);
+  await waitForFormulario120Submission(page);
+  await checkpoint(page, "05-f120-submit-response");
+  const resultAccept = page
+    .locator(".modal-dialog:visible")
+    .getByRole("button", { name: /^\s*Aceptar\s*$/i })
+    .first();
+  if (await resultAccept.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false)) {
+    await resultAccept.click();
+    await page.waitForTimeout(800);
+  }
+  await saveJustificante(page, period, "F120-resultado").catch(error => {
+    console.log(`No se pudo guardar el resultado F120: ${error.message}`);
+  });
+  if (!await verifyFormulario120Presented(page, period, "05-f120-consult-after-submit")) {
+    throw new Error(`F120: no aparece como declaración presentada y activa en Consultar Declaraciones para ${displayPeriod(period)}.`);
+  }
+  await checkpoint(page, "05-f120-submitted-verified");
+  const justificante = await saveFormulario120Declaracion(page, period).catch(error => {
+    console.log(`No se pudo guardar la declaración F120: ${error.message}`);
     return undefined;
   });
-  return justificante ? { justificante } : undefined;
+  return { status: "presentado", justificante };
 }
 
 async function prepareFormulario241(page, period, submit) {
-  console.log(`Preparing F241 talon presentation for ${periodKey(period)}.`);
+  console.log(`Preparing F241 talon presentation for ${displayPeriod(period)}.`);
   const gestionPage = await openFormulario241Gestion(page);
   await checkpoint(gestionPage, "06-f241-gestion");
 
   const talonPage = await openFormulario241Talon(gestionPage);
   await checkpoint(talonPage, "07-f241-talon-opened");
 
-  await talonPage.locator('select[name="anho"]').waitFor({ state: "visible", timeout: 20000 });
-  await talonPage.locator('select[name="anho"]').selectOption(String(period.year));
-  await talonPage.locator('select[name="mes"]').waitFor({ state: "visible", timeout: 20000 });
-  await talonPage.locator('select[name="mes"]').selectOption(String(period.month));
-  await waitForMarangatu(talonPage);
+  await selectFormulario241Period(talonPage, period);
   await checkpoint(talonPage, "08-f241-period-selected");
 
-  if (await talonPage.getByText("No existen talones pendientes de presentación", { exact: false }).isVisible().catch(() => false)) {
-    console.log(`F241 has no pending talons for ${periodKey(period)}.`);
-    return;
+  if (await talonPage.getByText(noPendingTalons, { exact: false }).isVisible().catch(() => false)) {
+    console.log(`F241 has no pending talons for ${displayPeriod(period)}.`);
+    return { status: "sin pendientes", stateStatus: "sin-pendientes" };
   }
 
   const submitButton = talonPage
@@ -468,7 +394,7 @@ async function prepareFormulario241(page, period, submit) {
   if (!submit) {
     await showSubmitDisabledAlert(talonPage, "F241", "Hay talones pendientes, pero el script se detuvo antes de confirmar la presentacion.");
     console.log("F241 stopped before final confirmation because submit mode is off.");
-    return;
+    return { status: "talones pendientes; preparado hasta Confirmar presentación" };
   }
 
   await safeClick(talonPage, submitButton, "Presentar declaracion F241");
@@ -481,143 +407,169 @@ async function prepareFormulario241(page, period, submit) {
   await popupAccept.waitFor({ state: "visible", timeout: 20000 });
   await safeClick(talonPage, popupAccept, "Aceptar popup F241");
   await checkpoint(talonPage, "11-f241-popup-accepted");
-  const justificante = await saveJustificante(talonPage, period, "F241").catch(error => {
-    console.log(`No se pudo guardar justificante F241: ${error.message}`);
+  await saveJustificante(talonPage, period, "F241-resultado").catch(error => {
+    console.log(`No se pudo guardar el resultado F241: ${error.message}`);
+  });
+  // El portal reutiliza la ventana del talón si sigue abierta y no emite popup.
+  if (talonPage !== gestionPage) await talonPage.close().catch(() => {});
+
+  const verificationGestionPage = await openFormulario241Gestion(gestionPage);
+  const verificationPage = await openFormulario241Talon(verificationGestionPage);
+  await selectFormulario241Period(verificationPage, period);
+  const noPending = await verificationPage
+    .getByText(noPendingTalons, { exact: false })
+    .isVisible()
+    .catch(() => false);
+  await checkpoint(verificationPage, "12-f241-submitted-verified");
+  if (!noPending) {
+    throw new Error(`F241: el portal aún muestra talones pendientes para ${displayPeriod(period)} tras confirmar.`);
+  }
+
+  const justificante = await saveFormulario241Talon(verificationPage, period).catch(error => {
+    console.log(`No se pudo guardar el talón F241: ${error.message}`);
     return undefined;
   });
-  return justificante ? { justificante } : undefined;
+  return { status: "presentado", justificante };
+}
+
+// Abre desde el talón la "Consulta de Declaraciones Informativas", busca el
+// 241 del periodo y guarda su detalle en presentaciones/YYYY-MM/.
+async function saveFormulario241Talon(talonPage, period) {
+  const context = talonPage.context();
+  const [consulta] = await Promise.all([
+    context.waitForEvent("page", { timeout: 20000 }),
+    talonPage.getByText("Consulta de Declaraciones Informativas", { exact: true }).click()
+  ]);
+  try {
+    const formSelect = consulta.locator('select[name="estado"]');
+    await formSelect.waitFor({ state: "visible", timeout: 30000 });
+    await formSelect.selectOption({ label: "241 - TALON PRESENTACION" });
+    await consulta.locator('input[name="periodoDesde"]').fill(displayPeriod(period));
+    await consulta.locator('input[name="periodoHasta"]').fill(displayPeriod(period));
+    await consulta.getByText("Búsqueda", { exact: true }).click();
+    const row = consulta.locator("table tbody tr")
+      .filter({ hasText: periodStateKey(period).replace("-", "") })
+      .first();
+    await row.waitFor({ state: "visible", timeout: 30000 });
+    const [detail] = await Promise.all([
+      context.waitForEvent("page", { timeout: 20000 }),
+      row.getByText("Consultar", { exact: true }).click()
+    ]);
+    try {
+      await detail.waitForLoadState("domcontentloaded");
+      await waitForMarangatu(detail);
+      return await saveJustificante(detail, period, "F241-talon");
+    } finally {
+      await detail.close().catch(() => {});
+    }
+  } finally {
+    await consulta.close().catch(() => {});
+  }
+}
+
+async function selectFormulario241Period(page, period) {
+  await page.locator('select[name="anho"]').waitFor({ state: "visible", timeout: 20000 });
+  await page.locator('select[name="anho"]').selectOption(String(period.year));
+  await page.locator('select[name="mes"]').waitFor({ state: "visible", timeout: 20000 });
+  await page.locator('select[name="mes"]').selectOption(String(period.month));
+  await waitForMarangatu(page);
 }
 
 async function openFormulario241Gestion(page) {
   await openFormulario241Menu(page);
 
-  const dynamicUrl = findMarangatuUrlInHtml(await page.content(), f241GestionPath);
-  const fallbackUrl = env("MARANGATU_F241_GESTION_URL", "");
-  const gestionUrl = dynamicUrl || fallbackUrl;
-  if (gestionUrl && await tryOpenFormulario241GestionUrl(page, gestionUrl)) {
-    return page;
-  }
-
-  await openFormulario241Menu(page);
-  const angularGestionUrl = await findF241GestionUrlFromAngularMenu(page);
-  if (angularGestionUrl && await tryOpenFormulario241GestionUrl(page, angularGestionUrl)) {
-    return page;
+  // Rutas de sesión candidatas, de la más directa a la más frágil. Cada intento
+  // fallido navega fuera del menú, así que se reabre antes del siguiente.
+  const candidates = [
+    async () => findMarangatuUrlInHtml(await page.content(), f241GestionPath),
+    async () => env("MARANGATU_F241_GESTION_URL", ""),
+    async () => {
+      const url = await f241GestionMenuAction(page, "url").catch(error => {
+        console.log(`Could not read F241 Gestion URL from Angular menu: ${error.message}`);
+        return "";
+      });
+      if (url) console.log("Found F241 Gestion URL in Angular menu (redacted).");
+      return url;
+    }
+  ];
+  for (const candidate of candidates) {
+    const url = await candidate();
+    if (!url) continue;
+    if (await tryOpenFormulario241GestionUrl(page, url)) return page;
+    await openFormulario241Menu(page);
   }
 
   await clickF241GestionOption(page);
   await waitForMarangatu(page);
-  await page.getByRole("heading", { name: /Gestión de Comprobantes|Gestion de Comprobantes/ })
+  await page.getByRole("heading", { name: f241GestionHeading })
     .waitFor({ state: "visible", timeout: 20000 });
   return page;
 }
 
 async function clickF241GestionOption(page) {
-  const optionText = "Gestion De Comprobantes Informativos";
   const option = page.locator('[data-ng-click="vm.opcion(item.aplicacion)"]')
-    .filter({ hasText: optionText })
+    .filter({ hasText: f241GestionOption })
     .first();
 
   await option.waitFor({ state: "visible", timeout: 10000 });
   await option.click();
   await page.waitForTimeout(1500);
 
-  const opened = await page.getByRole("heading", { name: /Gestión de Comprobantes|Gestion de Comprobantes/ })
+  const opened = await page.getByRole("heading", { name: f241GestionHeading })
     .isVisible()
     .catch(() => false);
   if (opened) return;
 
   console.log("F241 Gestion menu click did not navigate; retrying through Angular controller.");
-  await page.evaluate(text => {
-    const angularRef = window.angular;
-    const menuRoot = document.querySelector('[data-ng-controller="MenuController as vm"]');
-    if (!angularRef || !menuRoot) throw new Error("Angular MenuController is not available.");
-
-    const scope = angularRef.element(menuRoot).scope();
-    const vm = scope && scope.vm;
-    const item = findAngularMenuItem(vm && vm.datos && vm.datos.menu, text);
-    if (!item) throw new Error(`Could not find menu option: ${text}`);
-
-    scope.$apply(() => vm.opcion(item.aplicacion));
-
-    function findAngularMenuItem(items, expectedText) {
-      if (!Array.isArray(items)) return undefined;
-      return items.find(item => {
-        const values = [
-          item && item.descripcion,
-          item && item.nombre,
-          item && item.titulo,
-          item && item.texto,
-          item && item.aplicacion && item.aplicacion.descripcion,
-          item && item.aplicacion && item.aplicacion.nombre,
-          item && item.aplicacion && item.aplicacion.titulo,
-          item && item.aplicacion && item.aplicacion.texto
-        ];
-        return values.filter(Boolean).some(value => String(value).includes(expectedText));
-      });
-    }
-  }, optionText);
+  await f241GestionMenuAction(page, "open");
 }
 
-async function findF241GestionUrlFromAngularMenu(page) {
-  const optionText = "Gestion De Comprobantes Informativos";
-  const url = await page.evaluate(text => {
-    const angularRef = window.angular;
+// Busca la opción de Gestión de Comprobantes en el modelo Angular del menú.
+// action "url" devuelve su URL absoluta (o ""); action "open" la abre.
+async function f241GestionMenuAction(page, action) {
+  return page.evaluate(({ text, action }) => {
     const menuRoot = document.querySelector('[data-ng-controller="MenuController as vm"]');
-    if (!angularRef || !menuRoot) return "";
+    const scope = window.angular && menuRoot ? window.angular.element(menuRoot).scope() : undefined;
+    const vm = scope?.vm;
+    const items = Array.isArray(vm?.datos?.menu) ? vm.datos.menu : [];
+    const fields = ["descripcion", "nombre", "titulo", "texto"];
+    const item = items.find(entry => [
+      ...fields.map(field => entry?.[field]),
+      ...fields.map(field => entry?.aplicacion?.[field])
+    ].some(value => value && String(value).includes(text)));
 
-    const scope = angularRef.element(menuRoot).scope();
-    const vm = scope && scope.vm;
-    const item = findAngularMenuItem(vm && vm.datos && vm.datos.menu, text);
-    if (!item) return "";
-
-    const rawUrl = item.url || (item.aplicacion && item.aplicacion.url) || "";
-    return rawUrl ? new URL(rawUrl, window.location.href).href : "";
-
-    function findAngularMenuItem(items, expectedText) {
-      if (!Array.isArray(items)) return undefined;
-      return items.find(item => {
-        const values = [
-          item && item.descripcion,
-          item && item.nombre,
-          item && item.titulo,
-          item && item.texto,
-          item && item.aplicacion && item.aplicacion.descripcion,
-          item && item.aplicacion && item.aplicacion.nombre,
-          item && item.aplicacion && item.aplicacion.titulo,
-          item && item.aplicacion && item.aplicacion.texto
-        ];
-        return values.filter(Boolean).some(value => String(value).includes(expectedText));
-      });
+    if (action === "url") {
+      const rawUrl = item?.url || item?.aplicacion?.url || "";
+      return rawUrl ? new URL(rawUrl, window.location.href).href : "";
     }
-  }, optionText).catch(error => {
-    console.log(`Could not read F241 Gestion URL from Angular menu: ${error.message}`);
+    if (!scope) throw new Error("Angular MenuController is not available.");
+    if (!item) throw new Error(`Could not find menu option: ${text}`);
+    scope.$apply(() => vm.opcion(item.aplicacion));
     return "";
-  });
-
-  if (url) console.log(`Found F241 Gestion URL in Angular menu: ${url}`);
-  return url;
+  }, { text: f241GestionOption, action });
 }
 
 async function openFormulario241Menu(page) {
   await openHome(page);
 
-  const category = page.getByText("Declaraciones Informativas", { exact: false });
-  const categoryCount = await category.count();
-  if (categoryCount < 2) {
-    throw new Error(`Expected two Declaraciones Informativas menu entries; found ${categoryCount}.`);
-  }
-
-  await category.nth(1).click();
+  const category = page.getByText("Declaraciones Informativas", { exact: true }).first();
+  await category.waitFor({ state: "visible", timeout: 10000 });
+  await category.click();
   await page.waitForTimeout(1500);
   await checkpoint(page, "06-f241-category-open");
 }
 
 async function tryOpenFormulario241GestionUrl(page, gestionUrl) {
-  console.log(`Opening F241 Gestion URL: ${gestionUrl}`);
-  await page.goto(gestionUrl, { waitUntil: "domcontentloaded" });
+  console.log("Opening F241 Gestion URL (redacted).");
+  // Una URL inválida o caducada no debe cortar los siguientes intentos.
+  const navigated = await page.goto(gestionUrl, { waitUntil: "domcontentloaded" }).then(() => true, error => {
+    console.log(`F241 Gestion URL failed to load: ${error.message.split("\n")[0]}`);
+    return false;
+  });
+  if (!navigated) return false;
   await waitForMarangatu(page);
 
-  const opened = await page.getByRole("heading", { name: /Gestión de Comprobantes|Gestion de Comprobantes/ })
+  const opened = await page.getByRole("heading", { name: f241GestionHeading })
     .isVisible()
     .catch(() => false);
   if (!opened) {
@@ -629,7 +581,12 @@ async function tryOpenFormulario241GestionUrl(page, gestionUrl) {
 
 async function openFormulario241Talon(gestionPage) {
   const popupPromise = gestionPage.waitForEvent("popup", { timeout: 10000 }).catch(() => undefined);
-  await gestionPage.getByText("Confirmar Presentación", { exact: true }).dblclick();
+  const confirmCard = gestionPage
+    .getByText("Confirmar Presentación", { exact: true })
+    .first()
+    .locator("xpath=../..");
+  await confirmCard.waitFor({ state: "visible", timeout: 20000 });
+  await confirmCard.click();
   const popup = await popupPromise;
   const talonPage = popup || gestionPage;
   await talonPage.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => {});
@@ -649,17 +606,57 @@ async function openFormulario241Talon(gestionPage) {
   return talonPage;
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const period = targetPeriod(args);
-  const submit = !args.dryRun && (args.submit || boolEnv("MARANGATU_SUBMIT"));
+async function runForm(page, formName, period, submit, args, stateFilePath) {
+  if (formName === "F120" ? args.skipF120 : args.skipF241) {
+    return { form: formName, status: "saltado por flag", skipped: true, skippedReason: "skip flag" };
+  }
+  const outcome = await runFormWithStateTracking({
+    formName,
+    period,
+    submit,
+    stateFilePath,
+    retryError: args.retryPending || args.retryError === formName,
+    fn: () => formName === "F120"
+      ? prepareFormulario120(page, period, submit, args.force)
+      : prepareFormulario241(page, period, submit)
+  });
+  if (outcome.skipped) {
+    return { form: formName, status: "ya presentado", skipped: true, skippedReason: outcome.reason };
+  }
+  return {
+    form: formName,
+    status: outcome.status,
+    // Ruta relativa: el aviso no debe exponer la estructura local de carpetas.
+    justificante: outcome.justificante && path.relative(rootDir, outcome.justificante)
+  };
+}
 
-  console.log(`Target period: ${periodKey(period)}`);
+export async function main(argv = process.argv.slice(2), {
+  stateFilePath,
+  launchBrowser = options => chromium.launch(options)
+} = {}) {
+  const args = parseArgs(argv);
+  const period = targetPeriod(args);
+  const mode = resolveRunMode(args, period);
+  const submit = mode === "submit";
+
+  console.log(`Target period: ${displayPeriod(period)}`);
   console.log(`Real submission enabled: ${submit ? "yes" : "no"}`);
 
-  const browser = await chromium.launch({
-    headless: boolEnv("MARANGATU_HEADLESS", false),
-    slowMo: Number(env("MARANGATU_SLOWMO_MS", "120"))
+  if (submit && args.retryPending) {
+    const pending = (await pendingFormsForPeriod(period, stateFilePath))
+      .filter(form => !(form === "F120" ? args.skipF120 : args.skipF241));
+    if (pending.length === 0) {
+      console.log(`Sin formularios pendientes para ${displayPeriod(period)}; no se abre Marangatu.`);
+      return;
+    }
+    args.skipF120 = !pending.includes("F120");
+    args.skipF241 = !pending.includes("F241");
+  }
+
+  const browser = await launchBrowser({
+    headless: booleanValue(process.env.MARANGATU_HEADLESS, false),
+    slowMo: Number.parseInt(env("MARANGATU_SLOWMO_MS", "120"), 10) || 0
   });
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
@@ -668,49 +665,73 @@ async function main() {
   let runError;
   try {
     await login(page);
-    for (const formName of ["F120", "F241"]) {
-      const skipFlag = formName === "F120" ? args.skipF120 : args.skipF241;
-      if (skipFlag) {
-        results.push({ form: formName, status: "saltado por flag", skipped: true, skippedReason: "skip flag" });
-        continue;
-      }
+    for (const formName of forms) {
       try {
-        const outcome = await runFormWithStateTracking({
-          formName,
-          period,
-          submit,
-          force: args.force,
-          fn: () => formName === "F120"
-            ? prepareFormulario120(page, period, submit)
-            : prepareFormulario241(page, period, submit)
-        });
-        if (outcome && outcome.skipped) {
-          results.push({ form: formName, status: "ya presentado", skipped: true, skippedReason: outcome.reason || "estado previo" });
-        } else {
-          results.push({
-            form: formName,
-            status: submit ? "presentado" : "dry-run ok",
-            justificante: outcome && outcome.justificante
-          });
-        }
+        results.push(await runForm(page, formName, period, submit, args, stateFilePath));
       } catch (error) {
         results.push({ form: formName, status: "error", error: error.message });
         runError = error;
         break;
       }
     }
-    await checkpoint(page, "99-final-state");
+    if (submit && !runError && !args.skipF120) {
+      const verified = await consultFormulario120Presented(page, period, "98-f120-consult-final");
+      if (!verified) {
+        await setFormStatus(period, "F120", "error", {
+          error: "No aparece en Consultar Declaraciones durante la verificación final."
+        }, stateFilePath).catch(() => {});
+        throw new Error(`F120: la verificación final en Consultar Declaraciones no confirmó ${displayPeriod(period)}.`);
+      }
+      console.log(`F120 verified in Consultar Declaraciones for ${displayPeriod(period)}.`);
+    }
+  } catch (error) {
+    if (!runError) {
+      runError = error;
+      results.push({ form: "GENERAL", status: "error", error: error.message });
+    }
   } finally {
-    await context.close();
-    await browser.close();
+    if (runError) await checkpointOpenPages(context, "97-error");
+    else await checkpoint(page, "99-final-state");
+    await context.close().catch(error => {
+      console.log(`No se pudo cerrar el contexto del navegador: ${error.message}`);
+    });
+    await browser.close().catch(error => {
+      console.log(`No se pudo cerrar el navegador: ${error.message}`);
+    });
   }
 
-  const mode = submit ? "submit" : "dry-run";
-  const shouldNotify = submit || Boolean(runError);
-  if (shouldNotify) {
+  const hasNewPresentation = results.some(result => result.status === "presentado");
+  let notifications = notificationPolicy({ submit, runError, hasNewPresentation });
+
+  if (notifications.sendEmail) {
+    try {
+      const emailResult = await sendPresentationConfirmation({
+        period,
+        results,
+        stateFile: emailStateFile
+      });
+      console.log(emailResult.skipped
+        ? "Email de confirmación ya enviado para este período; no se duplica."
+        : "Email de confirmación enviado correctamente.");
+    } catch (error) {
+      const emailError = `La presentación fiscal terminó, pero falló el email de confirmación: ${error.message}`;
+      results.push({ form: "EMAIL", status: "error", error: emailError });
+      runError = new Error(emailError);
+    }
+  } else if (!notifications.emailEnabled) {
+    console.log("Email skipped (MARANGATU_EMAIL_ENABLED=false).");
+  } else {
+    console.log("Email skipped (no hay una presentación nueva verificada).");
+  }
+
+  // Se recalcula porque un fallo del email convierte la ejecución en error.
+  notifications = notificationPolicy({ submit, runError, hasNewPresentation });
+  if (notifications.sendTelegram) {
     const summary = buildResultSummary({ period, mode, results });
     console.log(`Resumen Telegram:\n${summary}`);
     await sendTelegramMessage(summary, { referencia: `marangatu-${periodStateKey(period)}` });
+  } else if (!notifications.telegramEnabled) {
+    console.log("Telegram skipped (MARANGATU_TELEGRAM_ENABLED=false).");
   } else {
     console.log("Telegram skipped (dry-run sin errores).");
   }
@@ -726,18 +747,3 @@ if (isCliRun) {
     process.exitCode = 1;
   });
 }
-
-export {
-  datePartsInTimeZone,
-  previousMonthPeriod,
-  targetPeriod,
-  periodStateKey,
-  loadFormState,
-  saveFormState,
-  getFormStatus,
-  setFormStatus,
-  runFormWithStateTracking,
-  escapeTelegramHtml,
-  buildResultSummary,
-  sendTelegramMessage
-};

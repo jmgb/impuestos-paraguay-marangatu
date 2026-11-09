@@ -4,7 +4,7 @@ import {
   datePartsInTimeZone,
   previousMonthPeriod,
   targetPeriod
-} from "../src/marangatu.js";
+} from "../src/core.js";
 
 assert.deepEqual(
   datePartsInTimeZone(new Date("2026-05-01T10:00:00.000Z"), "Europe/Madrid"),

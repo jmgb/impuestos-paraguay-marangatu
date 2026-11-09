@@ -1,14 +1,12 @@
-# Discovery Notes
+# Portal discovery notes
 
-Fecha de exploracion: 2026-05-09.
+Initial exploration: 2026-05-09. Last functional update: 2026-09-01.
 
-## Chrome
+All names, identifiers, and tax values are replaced with placeholders. Real checkpoints must never be committed or published.
 
-El plugin de Chrome finalmente funciono en este proyecto. Se verifico abriendo `https://www.marca.com/` y despues `https://marangatu.set.gov.py/eset/login`.
+## Marangatu login
 
-## Login Marangatu
-
-DOM observado:
+Observed accessible controls:
 
 ```text
 textbox "Usuario"
@@ -16,85 +14,70 @@ textbox "Contraseña"
 button "Acceder"
 ```
 
-Despues del login, el home mostro:
+The authenticated home page includes account information and recent filing periods. These values are sensitive and must not be logged.
 
-```text
-NOMBRE DEL CONTRIBUYENTE
-RUC_DEL_CONTRIBUYENTE
-Formulario 120
-04/2026
-03/2026
-02/2026
-01/2026
-```
+## Form 120
 
-Esto permite detectar si el F120 del periodo ya aparece en "Ultimas Declaraciones".
-
-## F120
-
-El enlace `Presentar Declaracion` aparece en `Opciones mas comunes`, con `href` interno parecido a:
+The `Presentar Declaración` shortcut (accessible name from its `title`, with accent) has a session-dependent internal link similar to:
 
 ```text
 recibirDDJJContribuyente.do?_cyp=...
 ```
 
-Ese token cambia por sesion, asi que el script debe leer el `href` del DOM y abrirlo.
+The token changes on every session, so the script reads the current link from the DOM instead of persisting it.
 
-Pantalla observada:
+Observed form controls:
 
 ```text
 heading "Presentar Declaración"
-RUC prellenado
-DV 3
-Obligación
+pre-filled tax identifier and verification digit
 option "211 - IVA General - MENSUAL"
-Periodo MENSUAL
-Año 2026, 2025, ...
-Mes Enero, Febrero, Marzo, Abril, ...
+monthly period
+year selector
+month selector
 button "Abrir Declaración"
 ```
 
-## F241
+After real submission, the workflow opens `Consultar Declaraciones`, filters the exact form and period, and requires an active terminal row.
 
-La ruta de menu observada fue:
+## Form 241
+
+Observed menu route:
 
 ```text
 Declaraciones Informativas
 Gestion De Comprobantes Informativos
 ```
 
-La opcion aparece visualmente en el menu lateral, pero durante esta exploracion no expuso un `href` directo ni disparo navegacion detectable con clicks automatizados. Para la siguiente sesion, el camino mas rapido es:
+The menu item may not expose a stable `href`. The script attempts to discover the dynamic route from the HTML or Angular menu model and falls back to clicking the visible card.
 
-1. Abrir Chrome con sesion iniciada.
-2. Ir al home.
-3. Abrir segunda entrada `Declaraciones Informativas`.
-4. Hacer click manual en `Gestion De Comprobantes Informativos`.
-5. Capturar URL final, HTML y/o request de red.
-6. Codificar esa ruta en `openInformativeReceipts`.
-
-La URL correcta de gestion capturada fue:
+The dynamic route resembles:
 
 ```text
 gestionComprobantesVirtuales.do?_cyp=...
 ```
 
-La tarjeta `Confirmar Presentación` abre una nueva pestana:
+The `Confirmar Presentación` card opens a page resembling:
 
 ```text
 gdi/presentacionTalonResumen.do?_cyp=...
 ```
 
-La pantalla de talon contiene:
+Observed period controls:
 
 ```html
 <select name="anho">...</select>
 <select name="mes">...</select>
 ```
 
-Para el periodo probado, tras elegir ano/mes la pantalla mostro:
+When no slips are pending, the portal displays:
 
 ```text
 No existen talones pendientes de presentación
 ```
 
-Si en otro periodo aparecen talones pendientes, falta validar el selector exacto del boton final antes de permitir `--submit`.
+If slips are pending, dry-run confirms that the final button exists without clicking it. Authorized real submission clicks `Presentar declaración`, accepts the dialog, and reopens the same period. Success requires the portal to report that no pending slips remain.
+
+## Final verification
+
+Form 120 requires a matching form and period, active flag, and accepted terminal status in `Consultar Declaraciones`. Form 241 uses the independent pending-slip check. Both gates run before success notifications.
